@@ -3,12 +3,13 @@ import 'dart:io';
 import 'dart:math'; // Importa a biblioteca para gerar números aleatórios
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 class MqttService {
   final String server = 'io.adafruit.com';
   final int port = 8883;
-  final String username = 'Nycostex'; // Seu username
-  final String apiKey = 'aio_Kghi20pS551j1cEzf4WhEAAgXCkX'; // Sua AIO Key
+  final String username = dotenv.env['ADAFRUIT_IO_USERNAME']!; // Seu username
+  final String apiKey = dotenv.env['ADAFRUIT_IO_KEY']!; // Sua AIO Key
 
   // --- FIX 1: Client ID mais simples e aleatório ---
   final String clientIdentifier = 'flutterClient-${Random().nextInt(100000)}';
@@ -19,6 +20,7 @@ class MqttService {
   Stream<String> get messages => _messageStreamController.stream;
 
   Future<void> connect() async {
+
     client = MqttServerClient.withPort(server, clientIdentifier, port);
 
     // Configurações de segurança
