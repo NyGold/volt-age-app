@@ -42,7 +42,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void _connectAndListen() async {
-    await _mqttService.connect();
+    await _mqttService.connect(); 
     _mqttService.messages.listen((message) {
       setState(() {
         _receivedMessage = message;

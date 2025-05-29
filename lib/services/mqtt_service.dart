@@ -8,8 +8,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 class MqttService {
   final String server = 'io.adafruit.com';
   final int port = 8883;
-  final String username = dotenv.env['ADAFRUIT_IO_USERNAME']!; // Seu username
-  final String apiKey = dotenv.env['ADAFRUIT_IO_KEY']!; // Sua AIO Key
+  final String username = dotenv.env['ADAFRUIT_IO_USERNAME']!;  // Seu username
+  final String apiKey = dotenv.env['ADAFRUIT_IO_KEY']!;         // Sua AIO Key
 
   // --- FIX 1: Client ID mais simples e aleatório ---
   final String clientIdentifier = 'flutterClient-${Random().nextInt(100000)}';
