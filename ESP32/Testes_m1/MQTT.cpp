@@ -2,16 +2,7 @@
 #include <WiFi.h>          // Para comunicação Wi-Fi do ESP32
 #include <Adafruit_MQTT.h> // Para MQTT
 #include <Adafruit_MQTT_Client.h> // Para o cliente MQTT da Adafruit
-
-// --- Configurações de Wi-Fi ---
-#define WIFI_SSID       "CAL SILVA"       // SEU NOME DA REDE WI-FI
-#define WIFI_PASSWORD   "18CALS46"        // SUA SENHA DA REDE WI-FI
-
-// --- Configurações do Adafruit IO ---
-#define IO_SERVER       "io.adafruit.com"
-#define IO_SERVERPORT   1883 // Porta padrão para MQTT
-#define IO_USERNAME     "VoltAge_Silva"   // SEU IO USERNAME
-#define IO_KEY          "aio_kHpr09XaRzyeBw1HFhM1OREhKJvm" // SUA IO KEY
+#include "secrets.h"
 
 // --- Definição do Pino do Sensor PIR ---
 const int PINO_SENSOR_PIR = 27; // Conecte o pino 'OUT' do sensor PIR ao GPIO27 do ESP32
