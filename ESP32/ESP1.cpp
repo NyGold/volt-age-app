@@ -40,17 +40,18 @@ const int NUM_MELODY = sizeof(melody) / sizeof(melody[0]);
 WiFiClient client;
 Adafruit_MQTT_Client mqtt(&client, IO_SERVER, IO_SERVERPORT, IO_USERNAME, IO_KEY);
 
-// --- Feeds do Adafruit IO (Publicação) ---
-Adafruit_MQTT_Publish gasConcentracaoFeed = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/gas-concentracao");
-Adafruit_MQTT_Publish gasAlertaFeed       = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/gas-alerta");
-Adafruit_MQTT_Publish valvulaGasEstadoFeed= Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/valvula-gas-estado");
-Adafruit_MQTT_Publish fogoEstadoFeed      = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/fogo-estado");
-Adafruit_MQTT_Publish presencaCozinhaFeed = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/presenca-cozinha");
+// --- Feeds do Adafruit IO (Publicação) - ATUALIZADOS PARA O GRUPO 'cozinha' ---
+const char* group_name = "cozinha";
+Adafruit_MQTT_Publish gasConcentracaoFeed = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/groups/cozinha/feeds/gas-concentracao");
+Adafruit_MQTT_Publish gasAlertaFeed       = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/groups/cozinha/feeds/gas-alerta");
+Adafruit_MQTT_Publish valvulaGasEstadoFeed= Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/groups/cozinha/feeds/valvula-gas-estado");
+Adafruit_MQTT_Publish fogoEstadoFeed      = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/groups/cozinha/feeds/fogo-estado");
+Adafruit_MQTT_Publish presencaCozinhaFeed = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/groups/cozinha/feeds/presenca-cozinha");
 
-// --- Feeds do Adafruit IO (Assinatura - Receber Comandos do App) ---
-Adafruit_MQTT_Subscribe valvulaGasControleSub = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/valvula-gas-controle");
-Adafruit_MQTT_Subscribe fogoTimerResetSub     = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/fogo-timer-reset");
-Adafruit_MQTT_Subscribe fogoTimerAppSub       = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/fogo-timer-app");
+// --- Feeds do Adafruit IO (Assinatura) - ATUALIZADOS PARA O GRUPO 'cozinha' ---
+Adafruit_MQTT_Subscribe valvulaGasControleSub = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/groups/cozinha/feeds/valvula-gas-controle");
+Adafruit_MQTT_Subscribe fogoTimerResetSub     = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/groups/cozinha/feeds/fogo-timer-reset");
+Adafruit_MQTT_Subscribe fogoTimerAppSub       = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/groups/cozinha/feeds/fogo-timer-app");
 
 
 // --- Constantes de Controle e Timers ---
@@ -64,7 +65,6 @@ const long BLINK_INTERVAL       = 250;   // Intervalo para piscar o LED de alarm
 int  valorGasAtual = 0;
 bool chamaDetectada = false;
 bool presencaDetectada = false;
-bool alarmeGasAtivo = false;
 bool valvulaGasAberta = false;
 unsigned long timerFogoSemPresenca = 0;
 bool timerFogoSemPresencaAtivo = false;
@@ -241,7 +241,8 @@ void updateSystemState() {
 
   // ESTADO NORMAL: Se nenhum alarme ou trava do app estiver ativa
   currentState = NORMAL;
-  if (!fogoTimerAppAtivo) { // Só abre a válvula automaticamente se o app não tiver fechado
+  // Apenas reabre a válvula automaticamente se ela não foi fechada pelo app
+  if (currentState != ALERTA_APLICATIVO) {
       controlValvulaSolenoide(true);
   }
 }
@@ -314,7 +315,6 @@ void handleMQTTMessages() {
   Adafruit_MQTT_Subscribe *subscription;
   if ((subscription = mqtt.readSubscription(500))) { // Timeout curto para não bloquear
     if (subscription == &valvulaGasControleSub) {
-      Serial.print("Comando Válvula: "); Serial.println((char *)subscription->lastread);
       // Uso de strcmp para evitar criar objetos String
       if (strcmp((char *)subscription->lastread, "FECHAR_AGORA") == 0) {
         controlValvulaSolenoide(false);
