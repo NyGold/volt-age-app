@@ -1,11 +1,10 @@
 // --- Bibliotecas Necessárias ---
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <Adafruit_MQTT.h>
-#include <Adafruit_MQTT_Client.h>
+#include "Adafruit_IO_Arduino.h"  // Nova biblioteca Adafruit IO
 #include <pgmspace.h>
 
 // --- Inclui o arquivo de segredos ---
+// ATENÇÃO: A nova biblioteca espera a senha do Wi-Fi na variável WIFI_PASS
 #include "secrets.h"
 
 // --- Pinos dos Sensores e Atuadores ---
@@ -18,8 +17,8 @@ const int PINO_FAROL_VERMELHO    = 13;
 const int PINO_FAROL_AMARELO     = 12;
 const int PINO_FAROL_VERDE       = 14;
 
-// --- Configuração do Buzzer para ESP32 (LEDC) ---
-byte ledcChannelBuzzer; // Variável para armazenar o canal do buzzer (para Core v3.x.x)
+// --- Configuração do Buzzer para ESP32 (LEDC) - API para Core v3.x.x ---
+#define LEDC_RESOLUTION 10 // Resolução em bits para o PWM do LEDC
 
 // --- Definição das Notas Musicais ---
 #define NOTE_C4 262
@@ -34,26 +33,25 @@ const int melody[] PROGMEM = {
 int tempoBase = 60000 / 120;
 const int NUM_MELODY = sizeof(melody) / sizeof(melody[0]);
 
-// --- Instâncias de Cliente e MQTT ---
-WiFiClientSecure client;
-Adafruit_MQTT_Client mqtt(&client, IO_SERVER, IO_SERVERPORT, IO_USERNAME, IO_KEY);
+// --- Instância do Adafruit IO ---
+AdafruitIO_MQTT io(IO_USERNAME, IO_KEY, WIFI_SSID, WIFI_PASS);
 
-// --- Feeds do Adafruit IO (Caminho Padrão, SEM GRUPOS) ---
-Adafruit_MQTT_Publish gasConcentracaoFeed = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/gas-concentracao");
-Adafruit_MQTT_Publish gasAlertaFeed       = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/gas-alerta");
-Adafruit_MQTT_Publish valvulaGasEstadoFeed= Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/valvula-gas-estado");
-Adafruit_MQTT_Publish fogoEstadoFeed      = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/fogo-estado");
-Adafruit_MQTT_Publish presencaCozinhaFeed = Adafruit_MQTT_Publish(&mqtt, IO_USERNAME "/feeds/presenca-cozinha");
+// --- Feeds do Adafruit IO (usando Adafruit_IO_Arduino) ---
+AdafruitIO_Feed *gasConcentracaoFeed = io.feed("gas-concentracao");
+AdafruitIO_Feed *gasAlertaFeed       = io.feed("gas-alerta");
+AdafruitIO_Feed *valvulaGasEstadoFeed= io.feed("valvula-gas-estado");
+AdafruitIO_Feed *fogoEstadoFeed      = io.feed("fogo-estado");
+AdafruitIO_Feed *presencaCozinhaFeed = io.feed("presenca-cozinha");
 
-Adafruit_MQTT_Subscribe valvulaGasControleSub = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/valvula-gas-controle");
-Adafruit_MQTT_Subscribe fogoTimerResetSub     = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/fogo-timer-reset");
-Adafruit_MQTT_Subscribe fogoTimerAppSub       = Adafruit_MQTT_Subscribe(&mqtt, IO_USERNAME "/feeds/fogo-timer-app");
+AdafruitIO_Feed *valvulaGasControleSub = io.feed("valvula-gas-controle");
+AdafruitIO_Feed *fogoTimerResetSub     = io.feed("fogo-timer-reset");
+AdafruitIO_Feed *fogoTimerAppSub       = io.feed("fogo-timer-app");
 
 // --- Constantes de Controle e Timers ---
 const int  LIMIAR_GAS_ALERTA = 1500;
 const long TEMPO_MAX_FOGO_SEM_PRESENCA = 5 * 60 * 1000;
 const long SENSOR_READ_INTERVAL = 500;
-const long PUBLISH_INTERVAL     = 16000; // Intervalo de 20s para respeitar limites
+const long PUBLISH_INTERVAL     = 20000;
 const long BLINK_INTERVAL       = 250;
 
 // --- Variáveis de Estado do Sistema e Timers ---
@@ -70,15 +68,18 @@ unsigned long lastPublishTime = 0;
 enum SystemState { NORMAL, ALARME_VAZAMENTO_GAS, ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO, ALERTA_APLICATIVO };
 SystemState currentState = NORMAL;
 
-// --- Protótipos de Funções ---
-void MQTT_connect();
+// --- Protótipos das Funções de Callback ---
+void handleValvulaControlMessage(AdafruitIO_Data *data);
+void handleFogoTimerResetMessage(AdafruitIO_Data *data);
+void handleFogoTimerAppMessage(AdafruitIO_Data *data);
+
+// --- Protótipos de Funções Auxiliares ---
 void readSensors();
 void controlValvulaSolenoide(bool abrir);
 void updateSystemState();
 void tocarMelodiaAlerta();
 void pararMelodiaAlerta();
-void handleMQTTMessages();
-void publishData();
+void publishData_IO();
 void updateVisualsAndAlarms();
 
 // --- Função setup() ---
@@ -88,6 +89,7 @@ void setup() {
   Serial.println("\n===================================");
   Serial.println("  Módulo Fogão/Gás - ESP32 #1      ");
   Serial.println("  (Biochallenge 25 - Volt Age)     ");
+  Serial.println("  Adafruit_IO_Arduino & Core v3.x.x");
   Serial.println("===================================");
 
   pinMode(PINO_SENSOR_GAS_AO, INPUT);
@@ -105,73 +107,105 @@ void setup() {
   digitalWrite(PINO_FAROL_AMARELO, LOW);
   digitalWrite(PINO_FAROL_VERDE, HIGH);
 
-  // API do buzzer para ESP32 Core v3.x.x
-  ledcChannelBuzzer = ledcAttach(PINO_BUZZER, 0, 10);
+  ledcAttach(PINO_BUZZER, 0, LEDC_RESOLUTION);
   pararMelodiaAlerta();
-  
-  // Solução para o problema de conexão SSL/TLS
-  client.setInsecure();
 
-  Serial.print("Conectando ao WiFi: ");
-  Serial.println(WIFI_SSID);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+  Serial.print("Conectando ao Adafruit IO");
+  io.connect();
+
+  valvulaGasControleSub->onMessage(handleValvulaControlMessage);
+  fogoTimerResetSub->onMessage(handleFogoTimerResetMessage);
+  fogoTimerAppSub->onMessage(handleFogoTimerAppMessage);
+
+  int connect_retries = 0;
+  while (io.status() < AIO_CONNECTED) {
     Serial.print(".");
+    delay(500);
+    connect_retries++;
+    if (connect_retries > 30) {
+      Serial.println("\nFalha ao conectar ao Adafruit IO. Reiniciando...");
+      ESP.restart();
+    }
   }
-  Serial.println("\nWiFi Conectado!");
+  Serial.println();
+  Serial.println(io.statusText());
   Serial.print("Endereço IP: ");
   Serial.println(WiFi.localIP());
 
-  mqtt.subscribe(&valvulaGasControleSub);
-  mqtt.subscribe(&fogoTimerResetSub);
-  mqtt.subscribe(&fogoTimerAppSub);
+  Serial.println("Buscando estados iniciais dos feeds de controle...");
+  valvulaGasControleSub->get();
+  fogoTimerResetSub->get();
+  fogoTimerAppSub->get();
+  Serial.println("------------------------------------");
 }
 
 // --- Função loop() ---
 void loop() {
-  MQTT_connect();
-  handleMQTTMessages();
-  if (millis() - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
+  io.run(); // Gerencia a conexão e dispara os callbacks.
+  unsigned long currentTime = millis();
+  if (currentTime - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
     readSensors();
     updateSystemState();
-    lastSensorReadTime = millis();
+    lastSensorReadTime = currentTime;
   }
   updateVisualsAndAlarms();
-  if (millis() - lastPublishTime >= PUBLISH_INTERVAL) {
-    publishData();
-    lastPublishTime = millis();
+  if (currentTime - lastPublishTime >= PUBLISH_INTERVAL) {
+    publishData_IO();
+    lastPublishTime = currentTime;
   }
-  mqtt.ping();
+}
+
+// --- Implementação das Funções de Callback ---
+void handleValvulaControlMessage(AdafruitIO_Data *data) {
+  Serial.print("CALLBACK Recebido: '");
+  Serial.print(data->toString());
+  Serial.println("'");
+
+  const char *comando = data->toChar();
+  if (strcmp(comando, "FECHAR_AGORA") == 0) {
+    controlValvulaSolenoide(false);
+    currentState = ALERTA_APLICATIVO;
+  } else if (strcmp(comando, "ABRIR_AGORA") == 0) {
+    if (currentState == ALARME_VAZAMENTO_GAS) {
+      if (valorGasAtual < LIMIAR_GAS_ALERTA) {
+        Serial.println("Alarme de gás resetado pelo app. Nível de gás seguro.");
+        currentState = NORMAL;
+        controlValvulaSolenoide(true);
+      } else {
+        Serial.println("AVISO: Reset negado! Nível de gás ainda está alto.");
+      }
+    } else if (currentState != ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO) {
+      controlValvulaSolenoide(true);
+      currentState = NORMAL;
+    } else {
+      Serial.println("AVISO: Abertura negada devido a outro alarme ativo.");
+    }
+  }
+}
+
+void handleFogoTimerResetMessage(AdafruitIO_Data *data) {
+  if (strcmp(data->toChar(), "RESET_TIMER") == 0) {
+    timerFogoSemPresenca = millis();
+    Serial.println("Timer de Fogo sem Presença RESETADO pelo app.");
+  }
+}
+
+void handleFogoTimerAppMessage(AdafruitIO_Data *data) {
+  if (strcmp(data->toChar(), "ATIVAR_TIMER") == 0) {
+    fogoTimerAppAtivo = true;
+    timerFogoSemPresencaAtivo = false;
+    Serial.println("Timer de Fogo do App ATIVADO.");
+  } else if (strcmp(data->toChar(), "DESATIVAR_TIMER") == 0) {
+    fogoTimerAppAtivo = false;
+    Serial.println("Timer de Fogo do App DESATIVADO.");
+  }
 }
 
 // --- Implementação das Funções Auxiliares ---
-void MQTT_connect() {
-  if (mqtt.connected()) return;
-  Serial.print("Conectando ao MQTT... ");
-  uint8_t retries = 3;
-  while (mqtt.connect() != 0) {
-    Serial.println(mqtt.connectErrorString(mqtt.connect()));
-    Serial.println("Tentando novamente em 5 segundos...");
-    mqtt.disconnect();
-    delay(5000);
-    retries--;
-    if (retries == 0) {
-      Serial.println("Falha na conexão MQTT. Reiniciando ESP32...");
-      ESP.restart();
-    }
-  }
-  Serial.println("MQTT Conectado!");
-}
-
 void readSensors() {
   valorGasAtual = analogRead(PINO_SENSOR_GAS_AO);
   chamaDetectada = (digitalRead(PINO_SENSOR_CHAMA_DO) == LOW);
   presencaDetectada = (digitalRead(PINO_SENSOR_PIR) == HIGH);
-  Serial.print("Gás: "); Serial.print(valorGasAtual);
-  Serial.print(" | Chama: "); Serial.print(chamaDetectada ? "SIM" : "NAO");
-  Serial.print(" | Presença: "); Serial.print(presencaDetectada ? "SIM" : "NAO");
-  Serial.println();
 }
 
 void controlValvulaSolenoide(bool abrir) {
@@ -187,6 +221,10 @@ void controlValvulaSolenoide(bool abrir) {
 }
 
 void updateSystemState() {
+  if (currentState == ALARME_VAZAMENTO_GAS) {
+    controlValvulaSolenoide(false);
+    return;
+  }
   if (valorGasAtual > LIMIAR_GAS_ALERTA) {
     currentState = ALARME_VAZAMENTO_GAS;
     controlValvulaSolenoide(false);
@@ -206,41 +244,42 @@ void updateSystemState() {
       timerFogoSemPresencaAtivo = false;
     }
   }
-  if (currentState == ALERTA_APLICATIVO) { return; }
-  currentState = NORMAL;
-  if (currentState != ALERTA_APLICATIVO) {
-    controlValvulaSolenoide(true);
+  if (currentState == ALERTA_APLICATIVO) {
+    controlValvulaSolenoide(false);
+    return;
   }
+  currentState = NORMAL;
+  controlValvulaSolenoide(true);
 }
 
 void updateVisualsAndAlarms() {
-    static unsigned long lastBlinkTime = 0;
-    static bool ledState = false;
-    switch (currentState) {
-        case NORMAL:
-            digitalWrite(PINO_FAROL_VERMELHO, LOW);
-            digitalWrite(PINO_FAROL_AMARELO, fogoTimerAppAtivo ? HIGH : LOW);
-            digitalWrite(PINO_FAROL_VERDE, fogoTimerAppAtivo ? LOW : HIGH);
-            pararMelodiaAlerta();
-            break;
-        case ALARME_VAZAMENTO_GAS:
-        case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
-            digitalWrite(PINO_FAROL_VERDE, LOW);
-            digitalWrite(PINO_FAROL_AMARELO, LOW);
-            tocarMelodiaAlerta();
-            if (millis() - lastBlinkTime >= BLINK_INTERVAL) {
-                ledState = !ledState;
-                digitalWrite(PINO_FAROL_VERMELHO, ledState);
-                lastBlinkTime = millis();
-            }
-            break;
-        case ALERTA_APLICATIVO:
-            digitalWrite(PINO_FAROL_VERMELHO, LOW);
-            digitalWrite(PINO_FAROL_AMARELO, HIGH);
-            digitalWrite(PINO_FAROL_VERDE, LOW);
-            pararMelodiaAlerta();
-            break;
-    }
+  static unsigned long lastBlinkTime = 0;
+  static bool ledState = false;
+  switch (currentState) {
+    case NORMAL:
+      digitalWrite(PINO_FAROL_VERMELHO, LOW);
+      digitalWrite(PINO_FAROL_AMARELO, fogoTimerAppAtivo ? HIGH : LOW);
+      digitalWrite(PINO_FAROL_VERDE, fogoTimerAppAtivo ? LOW : HIGH);
+      pararMelodiaAlerta();
+      break;
+    case ALARME_VAZAMENTO_GAS:
+    case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
+      digitalWrite(PINO_FAROL_VERDE, LOW);
+      digitalWrite(PINO_FAROL_AMARELO, LOW);
+      tocarMelodiaAlerta();
+      if (millis() - lastBlinkTime >= BLINK_INTERVAL) {
+        ledState = !ledState;
+        digitalWrite(PINO_FAROL_VERMELHO, ledState);
+        lastBlinkTime = millis();
+      }
+      break;
+    case ALERTA_APLICATIVO:
+      digitalWrite(PINO_FAROL_VERMELHO, LOW);
+      digitalWrite(PINO_FAROL_AMARELO, HIGH);
+      digitalWrite(PINO_FAROL_VERDE, LOW);
+      pararMelodiaAlerta();
+      break;
+  }
 }
 
 void tocarMelodiaAlerta() {
@@ -250,9 +289,9 @@ void tocarMelodiaAlerta() {
   if (millis() - lastNoteTime >= noteDuration) {
     int nota = pgm_read_word_near(melody + currentNoteIndex);
     if (nota > 0) {
-      ledcWriteTone(ledcChannelBuzzer, nota);
+      ledcWriteTone(PINO_BUZZER, nota);
     } else {
-      pararMelodiaAlerta();
+      ledcWriteTone(PINO_BUZZER, 0);
     }
     currentNoteIndex += 2;
     if (currentNoteIndex >= NUM_MELODY) {
@@ -263,63 +302,41 @@ void tocarMelodiaAlerta() {
 }
 
 void pararMelodiaAlerta() {
-  ledcWriteTone(ledcChannelBuzzer, 0);
+  ledcWriteTone(PINO_BUZZER, 0);
 }
 
-void handleMQTTMessages() {
-  Adafruit_MQTT_Subscribe *subscription;
-  if ((subscription = mqtt.readSubscription(500))) {
-    if (subscription == &valvulaGasControleSub) {
-      if (strcmp((char *)subscription->lastread, "FECHAR_AGORA") == 0) {
-        controlValvulaSolenoide(false);
-        currentState = ALERTA_APLICATIVO;
-      } else if (strcmp((char *)subscription->lastread, "ABRIR_AGORA") == 0) {
-        if (valorGasAtual <= LIMIAR_GAS_ALERTA && currentState != ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO) {
-          controlValvulaSolenoide(true);
-          currentState = NORMAL;
-        } else {
-          Serial.println("AVISO: Abertura negada devido a alarme ativo.");
-        }
-      }
-    } else if (subscription == &fogoTimerResetSub) {
-      if (strcmp((char *)subscription->lastread, "RESET_TIMER") == 0) {
-          timerFogoSemPresenca = millis();
-          Serial.println("Timer de Fogo sem Presença RESETADO pelo app.");
-      }
-    } else if (subscription == &fogoTimerAppSub) {
-      if (strcmp((char *)subscription->lastread, "ATIVAR_TIMER") == 0) {
-        fogoTimerAppAtivo = true;
-        timerFogoSemPresencaAtivo = false;
-        Serial.println("Timer de Fogo do App ATIVADO.");
-      } else if (strcmp((char *)subscription->lastread, "DESATIVAR_TIMER") == 0) {
-        fogoTimerAppAtivo = false;
-        Serial.println("Timer de Fogo do App DESATIVADO.");
-      }
-    }
-  }
-}
+void publishData_IO() {
+  Serial.println("Publicando dados no Adafruit IO...");
+  gasConcentracaoFeed->save(valorGasAtual);
+  valvulaGasEstadoFeed->save(valvulaGasAberta ? "ABERTA" : "FECHADA");
+  fogoEstadoFeed->save(chamaDetectada ? "DETECTADO" : "NAO_DETECTADO");
+  presencaCozinhaFeed->save(presencaDetectada ? "PRESENCA" : "AUSENCIA");
 
-void publishData() {
-  gasConcentracaoFeed.publish((int32_t)valorGasAtual); 
-  valvulaGasEstadoFeed.publish(valvulaGasAberta ? "ABERTA" : "FECHADA");
-  fogoEstadoFeed.publish(chamaDetectada ? "DETECTADO" : "NAO_DETECTADO");
-  presencaCozinhaFeed.publish(presencaDetectada ? "PRESENCA" : "AUSENCIA");
   switch (currentState) {
     case ALARME_VAZAMENTO_GAS:
-      gasAlertaFeed.publish("ALARME_GAS");
+      gasAlertaFeed->save("ALARME_GAS");
       break;
     case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
-      gasAlertaFeed.publish("FOGO_SEM_PRESENCA");
+      gasAlertaFeed->save("FOGO_SEM_PRESENCA");
       break;
+    case ALERTA_APLICATIVO:
+      gasAlertaFeed->save("ALERTA_APP");
+      break;
+    case NORMAL:
     default:
       if (fogoTimerAppAtivo) {
-        gasAlertaFeed.publish("FOGO_TIMER_ATIVO");
+        gasAlertaFeed->save("FOGO_TIMER_ATIVO");
       } else if (timerFogoSemPresencaAtivo) {
-        gasAlertaFeed.publish("FOGO_SEM_PRESENCA_CONTANDO");
+        char buffer[50]; // Correção do estouro de buffer
+        unsigned long tempoDecorrido = millis() - timerFogoSemPresenca;
+        long tempoRestanteMs = TEMPO_MAX_FOGO_SEM_PRESENCA - tempoDecorrido;
+        if (tempoRestanteMs < 0) tempoRestanteMs = 0;
+        unsigned long tempoRestanteSeg = tempoRestanteMs / 1000;
+        sprintf(buffer, "FOGO_CONTANDO (%lu s)", tempoRestanteSeg);
+        gasAlertaFeed->save(buffer);
       } else {
-        gasAlertaFeed.publish("OK");
+        gasAlertaFeed->save("OK");
       }
       break;
   }
-  Serial.println("Dados publicados no Adafruit IO.");
 }
