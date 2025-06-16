@@ -1,49 +1,41 @@
 // --- Bibliotecas Necessárias ---
 #include <WiFi.h>
-#include <AdafruitIO_WiFi.h> // CORREÇÃO: Biblioteca específica e correta para WiFi
+#include <AdafruitIO_WiFi.h>
 #include <pgmspace.h>
 
 // --- Inclui o arquivo de segredos ---
-// ATENÇÃO: A biblioteca espera a senha do Wi-Fi na variável WIFI_PASS
 #include "secrets.h"
 
 // --- Instância do Adafruit IO ---
 AdafruitIO_WiFi io(IO_USERNAME, IO_KEY, WIFI_SSID, WIFI_PASS);
 
 // --- Pinos dos Sensores e Atuadores ---
-const int PINO_SENSOR_GAS_AO = 32;
-const int PINO_SENSOR_CHAMA_DO = 33;
-const int PINO_SENSOR_PIR = 27;
+const int PINO_SENSOR_GAS_AO     = 32;
+const int PINO_SENSOR_CHAMA_DO   = 33;
+const int PINO_SENSOR_PIR        = 27;
 const int PINO_VALVULA_SOLENOIDE = 26;
-const int PINO_FAROL_VERMELHO = 13;
-const int PINO_FAROL_AMARELO = 12;
-const int PINO_FAROL_VERDE = 14;
+const int PINO_FAROL_VERMELHO    = 13;
+const int PINO_FAROL_AMARELO     = 12;
+const int PINO_FAROL_VERDE       = 14;
 
-// --- Configuração do Buzzer para ESP32 (LEDC) ---
-// Removido: toda a lógica do buzzer
-
-// --- Feeds do Adafruit IO ---
-AdafruitIO_Feed *gasConcentracaoFeed = io.feed("gas-concentracao");
-AdafruitIO_Feed *gasAlertaFeed = io.feed("gas-alerta");
+// --- Feeds do Adafruit IO (5 Feeds Essenciais) ---
+AdafruitIO_Feed *gasAlertaFeed        = io.feed("gas-alerta");
 AdafruitIO_Feed *valvulaGasEstadoFeed = io.feed("valvula-gas-estado");
-AdafruitIO_Feed *fogoEstadoFeed = io.feed("fogo-estado");
-AdafruitIO_Feed *presencaCozinhaFeed = io.feed("presenca-cozinha");
 
 AdafruitIO_Feed *valvulaGasControleSub = io.feed("valvula-gas-controle");
-AdafruitIO_Feed *fogoTimerResetSub = io.feed("fogo-timer-reset");
-AdafruitIO_Feed *fogoTimerAppSub = io.feed("fogo-timer-app");
+AdafruitIO_Feed *fogoTimerResetSub     = io.feed("fogo-timer-reset");
+AdafruitIO_Feed *fogoTimerAppSub       = io.feed("fogo-timer-app");
 
 // --- Constantes de Controle e Timers ---
-const int LIMIAR_GAS_ALERTA = 1500;
+const int  LIMIAR_GAS_ALERTA = 1500;
 const long TEMPO_MAX_FOGO_SEM_PRESENCA = 5 * 60 * 1000;
 const long SENSOR_READ_INTERVAL = 500;
-const long PUBLISH_INTERVAL = 20000;
 const long BLINK_INTERVAL_FAST = 250;
 const long BLINK_INTERVAL_SLOW = 1000;
-const long STATUS_CHANGE_PUBLISH_RATE_LIMIT = 1000;
+const long STATUS_CHANGE_PUBLISH_RATE_LIMIT = 1000; // Delay de 1s entre publicações de status
 
 // --- Variáveis de Estado do Sistema e Timers ---
-int valorGasAtual = 0;
+int  valorGasAtual = 0;
 bool chamaDetectada = false;
 bool presencaDetectada = false;
 bool valvulaGasAberta = false;
@@ -51,9 +43,8 @@ unsigned long timerFogoSemPresenca = 0;
 bool timerFogoSemPresencaAtivo = false;
 bool fogoTimerAppAtivo = false;
 unsigned long lastSensorReadTime = 0;
-unsigned long lastPublishTime = 0;
 
-bool lastChamaState = false;
+// Variáveis para a lógica "Publish on Change"
 bool lastValvulaGasState = false;
 char lastGasAlertaPublishedString[50] = "";
 unsigned long lastStatusChangePublishTime = 0;
@@ -62,12 +53,8 @@ enum SystemState { NORMAL, ALARME_VAZAMENTO_GAS, ALARME_FOGO_SEM_PRESENCA_OU_ESQ
 SystemState currentState = NORMAL;
 
 // Strings para publicação
-static char FOGO_DETECTADO[] = "DETECTADO";
-static char FOGO_NAO_DETECTADO[] = "NAO_DETECTADO";
 static char VALVULA_ABERTA[] = "ABERTA";
 static char VALVULA_FECHADA[] = "FECHADA";
-static char PRESENCA[] = "PRESENCA";
-static char AUSENCIA[] = "AUSENCIA";
 static char ALARME_GAS_STR[] = "ALARME_GAS";
 static char FOGO_SEM_PRESENCA_STR[] = "FOGO_SEM_PRESENCA";
 static char ALERTA_APP_STR[] = "ALERTA_APP";
@@ -82,8 +69,7 @@ void readSensors();
 void controlValvulaSolenoide(bool abrir);
 void updateSystemState();
 void publishStatusOnChange();
-void publishData_IO_Periodic();
-void updateVisualsAndAlarms();
+void updateVisuals();
 String getStateString(SystemState state);
 char* getGasAlertaString();
 
@@ -91,11 +77,7 @@ char* getGasAlertaString();
 void setup() {
   Serial.begin(115200);
   delay(10);
-  Serial.println("\n===================================");
-  Serial.println("  Módulo Fogão/Gás - ESP32 #1      ");
-  Serial.println("  (Biochallenge 25 - Volt Age)     ");
-  Serial.println("  Adafruit_IO_Arduino & Core v3.x.x");
-  Serial.println("===================================");
+  Serial.println("\n--- Módulo Fogão/Gás v1.1 (5 Feeds) ---");
 
   pinMode(PINO_SENSOR_GAS_AO, INPUT);
   pinMode(PINO_SENSOR_CHAMA_DO, INPUT);
@@ -105,13 +87,13 @@ void setup() {
   pinMode(PINO_FAROL_AMARELO, OUTPUT);
   pinMode(PINO_FAROL_VERDE, OUTPUT);
 
-  digitalWrite(PINO_VALVULA_SOLENOIDE, HIGH); // Relé ativo em LOW, então HIGH = desligado
-  valvulaGasAberta = false; // Válvula NF começa fechada (sem fluxo de gás)
+  digitalWrite(PINO_VALVULA_SOLENOIDE, HIGH);
+  valvulaGasAberta = false;
   digitalWrite(PINO_FAROL_VERMELHO, LOW);
   digitalWrite(PINO_FAROL_AMARELO, LOW);
   digitalWrite(PINO_FAROL_VERDE, HIGH);
 
-  Serial.print("Conectando ao Adafruit IO");
+  Serial.print("Conectando ao Adafruit IO...");
   io.connect();
 
   valvulaGasControleSub->onMessage(handleValvulaControlMessage);
@@ -131,15 +113,16 @@ void setup() {
   Serial.println();
   Serial.println(io.statusText());
 
+  // Sincroniza o estado inicial com o dashboard
   readSensors();
-  updateSystemState(); // Define o estado inicial com base nos sensores
+  controlValvulaSolenoide(true);
+  updateSystemState();
   publishStatusOnChange();
-  publishData_IO_Periodic();
 }
 
 // --- Função loop() ---
 void loop() {
-  io.run();
+  io.run(); // Essencial para a comunicação e callbacks
   unsigned long currentTime = millis();
 
   if (currentTime - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
@@ -155,12 +138,7 @@ void loop() {
   }
 
   publishStatusOnChange();
-  updateVisualsAndAlarms();
-
-  if (currentTime - lastPublishTime >= PUBLISH_INTERVAL) {
-    publishData_IO_Periodic();
-    lastPublishTime = currentTime;
-  }
+  updateVisuals();
 }
 
 // --- Implementação das Funções de Callback ---
@@ -172,7 +150,6 @@ void handleValvulaControlMessage(AdafruitIO_Data *data) {
   } else if (strcmp(comando, "ABRIR_AGORA") == 0) {
     if (currentState == ALARME_VAZAMENTO_GAS) {
       if (valorGasAtual < LIMIAR_GAS_ALERTA) {
-        Serial.println("Alarme de gás resetado pelo app. Nível de gás seguro.");
         currentState = NORMAL;
       } else {
         Serial.println("AVISO: Reset de alarme de gás negado! Nível de gás ainda está alto.");
@@ -189,14 +166,12 @@ void handleFogoTimerResetMessage(AdafruitIO_Data *data) {
   if (strcmp(data->toChar(), "RESET_TIMER") == 0) {
     if (currentState == ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO) {
       if (!chamaDetectada || presencaDetectada) {
-        Serial.println("Alarme de Fogo sem Presença RESETADO pelo app. Retornando ao estado NORMAL.");
         currentState = NORMAL;
       } else {
-        Serial.println("AVISO: Reset de alarme de fogo negado! Condição de perigo (fogo sem presença) ainda ativa.");
+        Serial.println("AVISO: Reset de alarme de fogo negado! Condição de perigo ainda ativa.");
       }
     } else {
       timerFogoSemPresenca = millis();
-      Serial.println("Timer de Fogo sem Presença (contagem) RESETADO pelo app.");
     }
   }
 }
@@ -219,10 +194,10 @@ void readSensors() {
 
 void controlValvulaSolenoide(bool abrir) {
   if (abrir && !valvulaGasAberta) {
-    digitalWrite(PINO_VALVULA_SOLENOIDE, LOW); // LOW liga o relé -> abre a válvula NF
+    digitalWrite(PINO_VALVULA_SOLENOIDE, LOW);
     valvulaGasAberta = true;
   } else if (!abrir && valvulaGasAberta) {
-    digitalWrite(PINO_VALVULA_SOLENOIDE, HIGH); // HIGH desliga o relé -> fecha a válvula NF
+    digitalWrite(PINO_VALVULA_SOLENOIDE, HIGH);
     valvulaGasAberta = false;
   }
 }
@@ -232,13 +207,11 @@ void updateSystemState() {
     controlValvulaSolenoide(false);
     return;
   }
-
   if (valorGasAtual > LIMIAR_GAS_ALERTA) {
     currentState = ALARME_VAZAMENTO_GAS;
     controlValvulaSolenoide(false);
     return;
   }
-
   if (chamaDetectada && !presencaDetectada && !fogoTimerAppAtivo) {
     if (!timerFogoSemPresencaAtivo) {
       timerFogoSemPresenca = millis();
@@ -253,52 +226,50 @@ void updateSystemState() {
       timerFogoSemPresencaAtivo = false;
     }
   }
-
   if (currentState == ALERTA_APLICATIVO) {
     controlValvulaSolenoide(false);
     return;
   }
-  
   currentState = NORMAL;
   controlValvulaSolenoide(true);
 }
 
-void updateVisualsAndAlarms() {
-    static unsigned long lastFastBlinkTime = 0;
-    static unsigned long lastSlowBlinkTime = 0;
-    static bool ledStateFast = false;
-    static bool ledStateSlow = false;
+void updateVisuals() {
+  static unsigned long lastFastBlinkTime = 0;
+  static unsigned long lastSlowBlinkTime = 0;
+  static bool ledStateFast = false;
+  static bool ledStateSlow = false;
   
-    digitalWrite(PINO_FAROL_VERMELHO, LOW);
-    digitalWrite(PINO_FAROL_AMARELO, LOW);
-    digitalWrite(PINO_FAROL_VERDE, LOW);
+  digitalWrite(PINO_FAROL_VERMELHO, LOW);
+  digitalWrite(PINO_FAROL_AMARELO, LOW);
+  digitalWrite(PINO_FAROL_VERDE, LOW);
 
-    switch (currentState) {
-        case NORMAL:
-            if (fogoTimerAppAtivo) {
-                digitalWrite(PINO_FAROL_AMARELO, HIGH);
-            } else if (timerFogoSemPresencaAtivo) {
-                if (millis() - lastSlowBlinkTime >= BLINK_INTERVAL_SLOW) {
-                    ledStateSlow = !ledStateSlow;
-                    digitalWrite(PINO_FAROL_AMARELO, ledStateSlow);
-                    lastSlowBlinkTime = millis();
-                }
-            } else {
-                digitalWrite(PINO_FAROL_VERDE, HIGH);
-            }
-            break;
-        case ALARME_VAZAMENTO_GAS:
-        case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
-            if (millis() - lastFastBlinkTime >= BLINK_INTERVAL_FAST) {
-                ledStateFast = !ledStateFast;
-                digitalWrite(PINO_FAROL_VERMELHO, ledStateFast);
-                lastFastBlinkTime = millis();
-            }
-            break;
-        case ALERTA_APLICATIVO:
-            digitalWrite(PINO_FAROL_AMARELO, HIGH);
-            break;
-    }
+  switch (currentState) {
+    case NORMAL:
+      if (fogoTimerAppAtivo) {
+        digitalWrite(PINO_FAROL_AMARELO, HIGH);
+      } else if (timerFogoSemPresencaAtivo) {
+        if (millis() - lastSlowBlinkTime >= BLINK_INTERVAL_SLOW) {
+          ledStateSlow = !ledStateSlow;
+          digitalWrite(PINO_FAROL_AMARELO, ledStateSlow);
+          lastSlowBlinkTime = millis();
+        }
+      } else {
+        digitalWrite(PINO_FAROL_VERDE, HIGH);
+      }
+      break;
+    case ALARME_VAZAMENTO_GAS:
+    case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
+      if (millis() - lastFastBlinkTime >= BLINK_INTERVAL_FAST) {
+        ledStateFast = !ledStateFast;
+        digitalWrite(PINO_FAROL_VERMELHO, ledStateFast);
+        lastFastBlinkTime = millis();
+      }
+      break;
+    case ALERTA_APLICATIVO:
+      digitalWrite(PINO_FAROL_AMARELO, HIGH);
+      break;
+  }
 }
 
 void publishStatusOnChange() {
@@ -308,11 +279,6 @@ void publishStatusOnChange() {
     }
     bool publishedSomething = false;
 
-    if (chamaDetectada != lastChamaState) {
-        fogoEstadoFeed->save(chamaDetectada ? FOGO_DETECTADO : FOGO_NAO_DETECTADO);
-        lastChamaState = chamaDetectada;
-        publishedSomething = true;
-    }
     if (valvulaGasAberta != lastValvulaGasState) {
         valvulaGasEstadoFeed->save(valvulaGasAberta ? VALVULA_ABERTA : VALVULA_FECHADA);
         lastValvulaGasState = valvulaGasAberta;
@@ -353,10 +319,8 @@ char* getGasAlertaString() {
     return currentGasAlertaString;
 }
 
-void publishData_IO_Periodic() {
-  gasConcentracaoFeed->save(valorGasAtual);
-  presencaCozinhaFeed->save(presencaDetectada ? PRESENCA : AUSENCIA);
-}
+// Removida: publishData_IO_Periodic() pois todos os dados agora são publicados por mudança.
+// (Se você quisesse manter gas-concentracao periódico, a função seria necessária)
 
 String getStateString(SystemState state) {
     switch (state) {
