@@ -1,11 +1,9 @@
+import 'package:english_words/english_words.dart';
 import 'package:flutter/material.dart';
-import 'services/mqtt_service.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:provider/provider.dart';
 
-void main() async {
-  await dotenv.load(fileName: ".env");
-
-  runApp(const MyApp());
+void main() {
+  runApp(MyApp());
 }
 
 class MyApp extends StatelessWidget {
@@ -13,91 +11,230 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Adafruit IO MQTT Test',
-      theme: ThemeData(
-        primarySwatch: Colors.blue,
+    return ChangeNotifierProvider(
+      create: (context) => MyAppState(),
+      child: MaterialApp(
+        title: 'Namer App',
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.lightBlueAccent),
+        ),
+        home: MyHomePage(),
       ),
-      home: const MyHomePage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key});
+class MyAppState extends ChangeNotifier {
+  var current = WordPair.random();
 
+  void getNext() {
+    current = WordPair.random();
+    notifyListeners();
+  }
+
+  var favorites = <WordPair>[];
+
+  void toggleFavorite() {
+    if (favorites.contains(current)) {
+      favorites.remove(current);
+    } else {
+      favorites.add(current);
+    }
+    notifyListeners();
+  }
+}
+
+// ...
+
+class MyHomePage extends StatefulWidget {
   @override
-  _MyHomePageState createState() => _MyHomePageState();
+  State<MyHomePage> createState() => _MyHomePageState();
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final MqttService _mqttService = MqttService();
-  final TextEditingController _textController = TextEditingController();
-  String _receivedMessage = 'Nenhuma mensagem recebida ainda.';
+
+  // variaveis inciais
+
+  var selectedIndex = 0;
+  bool isExtend = false;
 
   @override
-  void initState() {
-    super.initState();
-    _connectAndListen();
-  }
 
-  void _connectAndListen() async {
-    await _mqttService.connect(); 
-    _mqttService.messages.listen((message) {
-      setState(() {
-        _receivedMessage = message;
-      });
-    });
-  }
+  Widget build(BuildContext context) {
 
-  void _publishMessage() {
-    if (_textController.text.isNotEmpty) {
-      _mqttService.publish(_textController.text);
-      _textController.clear();
+    Widget page;
+    switch (selectedIndex) {
+      case 0:
+        page = GeneratorPage();
+        break;
+      case 1:
+        page = FavoritesPage();
+        break;
+      default:
+        throw UnimplementedError('no widget for $selectedIndex');
     }
-  }
 
-  @override
-  void dispose() {
-    _mqttService.disconnect();
-    super.dispose();
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Scaffold(
+          body: Row(
+            children: [
+              SafeArea(
+                child: NavigationRail(
+                  extended: constraints.maxWidth >= 600,
+                  destinations: [
+                    NavigationRailDestination(
+                      icon: Icon(Icons.home),
+                      label: Text('Home'),
+                    ),
+        
+                    NavigationRailDestination(
+                      icon: Icon(Icons.favorite),
+                      label: Text('Favorites'),
+                    ),
+                  ],
+                  selectedIndex: selectedIndex,
+                  onDestinationSelected: (value) {
+        
+                    setState(() {
+                      selectedIndex = value;
+                    });
+        
+                  },
+                ),
+              ),
+              Expanded(
+                child: Container(
+                  color: Theme.of(context).colorScheme.primaryContainer,
+                  child: page,
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+    );
   }
+}
+
+// ...
+
+class FavoritesPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    var appState = context.watch<MyAppState>();
+
+    if (appState.favorites.isEmpty) {
+      return Center(
+        child: Text('No favorites yet.'),
+      );
+    }
+
+    return ListView(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text('You have '
+              '${appState.favorites.length} favorites:'),
+        ),
+        for (var pair in appState.favorites)
+          ListTile(
+            leading: Icon(Icons.favorite),
+            title: Text(pair.asLowerCase),
+          ),
+      ],
+    );
+  }
+}
+
+class GeneratorPage extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    var appState = context.watch<MyAppState>();
+    var pair = appState.current;
+
+    IconData icon;
+    if (appState.favorites.contains(pair)) {
+      icon = Icons.favorite;
+    } else {
+      icon = Icons.favorite_border;
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          BigCard(pair: pair),
+          SizedBox(height: 10),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () {
+                  appState.toggleFavorite();
+                },
+                icon: Icon(icon),
+                label: Text('Like'),
+              ),
+              SizedBox(width: 10),
+              ElevatedButton(
+                onPressed: () {
+                  appState.getNext();
+                },
+                child: Text('Next'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ...
+
+
+class BigText extends StatelessWidget {
+  const BigText({
+    super.key,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Adafruit IO MQTT Test'),
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              'Mensagem Recebida do Feed:',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _receivedMessage,
-              style: Theme.of(context).textTheme.headlineMedium,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 40),
-            TextField(
-              controller: _textController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'Mensagem para publicar',
-              ),
-            ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _publishMessage,
-              child: const Text('Publicar no Feed'),
-            ),
-          ],
+
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Text('A random idea:'),
+    );
+  }
+}
+
+class BigCard extends StatelessWidget {
+  const BigCard({
+    super.key,
+    required this.pair,
+  });
+
+  final WordPair pair;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final style = theme.textTheme.displayMedium!.copyWith(
+      color: theme.colorScheme.onPrimary,
+    );
+
+
+    return Card(
+      color: theme.colorScheme.primary,
+      child: Padding(
+        padding: const EdgeInsets.all(8.0),
+        child: Text(
+          pair.asLowerCase,
+          style: style,
+          semanticsLabel: "${pair.first} ${pair.second}",
         ),
       ),
     );
