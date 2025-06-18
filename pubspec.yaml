@@ -19,6 +19,8 @@ dependencies:
 
   flutter_dotenv: ^5.1.0 # Manter a chave API em segredo
 
+  flutter_local_notifications: ^17.1.2 # para notificações locais do flutter
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
