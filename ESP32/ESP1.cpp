@@ -20,7 +20,7 @@ const int PINO_FAROL_VERDE       = 14;
 // Módulo Jardinagem
 const int PINO_SENSOR_UMIDADE_SOLO = 34;
 
-// --- Feeds do Adafruit IO ---
+// --- Feeds do Adafruit IO (8 Feeds no Total) ---
 // Cozinha (5 feeds)
 AdafruitIO_Feed *gasAlertaFeed        = io.feed("gas-alerta");
 AdafruitIO_Feed *valvulaGasEstadoFeed = io.feed("valvula-gas-estado");
@@ -32,10 +32,12 @@ AdafruitIO_Feed *jardimUmidadeSoloFeed  = io.feed("jardim-umidade-solo");
 AdafruitIO_Feed *jardimStatusRegaFeed   = io.feed("jardim-status-rega");
 AdafruitIO_Feed *jardimLimiarUmidadeSub = io.feed("jardim-limiar-umidade");
 
+
 // --- Constantes de Controle e Timers ---
 const int  LIMIAR_GAS_ALERTA = 1500;
 const long TEMPO_MAX_FOGO_SEM_PRESENCA = 5 * 60 * 1000;
 const long SENSOR_READ_INTERVAL = 500;
+const long PUBLISH_INTERVAL     = 20000;
 const long BLINK_INTERVAL_FAST = 250;
 const long BLINK_INTERVAL_SLOW = 1000;
 const long STATUS_CHANGE_PUBLISH_RATE_LIMIT = 2000;
@@ -54,11 +56,11 @@ SystemState currentState = NORMAL;
 // --- Variáveis de Estado - Jardinagem ---
 int valorUmidadeRaw = 0;
 int umidadePercent = 0;
-int limiarUmidade = 30; // Padrão de 30%
-char lastJardimStatusPublished[20] = "";
+int limiarUmidade = 30; // Padrão de 30%, pode ser atualizado pelo slider
 
 // --- Variáveis de Controle de Tempo e Publicação ---
 unsigned long lastSensorReadTime = 0;
+unsigned long lastPublishTime = 0;
 bool lastValvulaGasState = false;
 char lastGasAlertaPublishedString[50] = "";
 unsigned long lastStatusChangePublishTime = 0;
@@ -79,22 +81,21 @@ void handleValvulaControlMessage(AdafruitIO_Data *data);
 void handleFogoTimerResetMessage(AdafruitIO_Data *data);
 void handleFogoTimerAppMessage(AdafruitIO_Data *data);
 void handleJardimLimiarMessage(AdafruitIO_Data *data);
-void readCozinhaSensors();
-void readJardimSensor();
+void readSensors();
 void controlValvulaSolenoide(bool abrir);
 void updateSystemState();
 void publishStatusOnChange();
+void publishData_IO_Periodic();
 void updateVisuals();
 String getStateString(SystemState state);
 char* getGasAlertaString();
-char* getJardimStatusString();
 
 // --- Função setup() ---
 void setup() {
   Serial.begin(115200);
   delay(10);
   Serial.println("\n--- Biochallenge 25 - Volt Age ---");
-  Serial.println("Inicializando Módulo Cozinha + Jardinagem");
+  Serial.println("Inicializando Módulo Cozinha + Jardinagem (com Slider)");
 
   pinMode(PINO_SENSOR_GAS_AO, INPUT);
   pinMode(PINO_SENSOR_CHAMA_DO, INPUT);
@@ -111,7 +112,7 @@ void setup() {
   digitalWrite(PINO_FAROL_AMARELO, LOW);
   digitalWrite(PINO_FAROL_VERDE, HIGH);
 
-  Serial.print("Conectando ao Adafruit IO");
+  Serial.print("Conectando ao Adafruit IO...");
   io.connect();
 
   valvulaGasControleSub->onMessage(handleValvulaControlMessage);
@@ -139,11 +140,11 @@ void setup() {
   jardimLimiarUmidadeSub->get();
 
   // Sincroniza o estado inicial com o dashboard
-  readCozinhaSensors();
-  readJardimSensor();
+  readSensors();
   controlValvulaSolenoide(true);
   updateSystemState();
   publishStatusOnChange();
+  publishData_IO_Periodic();
 }
 
 // --- Função loop() ---
@@ -152,22 +153,23 @@ void loop() {
   unsigned long currentTime = millis();
 
   if (currentTime - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
-    readCozinhaSensors();
-    readJardimSensor();
+    readSensors();
     updateSystemState();
     lastSensorReadTime = currentTime;
     
     Serial.print("["); Serial.print(millis()); Serial.print("ms] Gás: "); Serial.print(valorGasAtual);
-    Serial.print(" | Chama: "); Serial.print(chamaDetectada ? "SIM" : "NAO");
-    Serial.print(" | Presença: "); Serial.print(presencaDetectada ? "SIM" : "NAO");
-    Serial.print(" | Válvula: "); Serial.print(valvulaGasAberta ? "ABERTA" : "FECHADA");
-    Serial.print(" | Estado Cozinha: "); Serial.print(getStateString(currentState));
+    Serial.print(" | Cozinha: "); Serial.print(getStateString(currentState));
     Serial.print(" | Umidade: "); Serial.print(umidadePercent); Serial.print("%");
-    Serial.print(" (Raw: "); Serial.print(valorUmidadeRaw); Serial.print(")");
+    Serial.print(" (Limiar: "); Serial.print(limiarUmidade); Serial.print("%)");
     Serial.println();
   }
   publishStatusOnChange();
   updateVisuals();
+
+  if (currentTime - lastPublishTime >= PUBLISH_INTERVAL) {
+    publishData_IO_Periodic();
+    lastPublishTime = currentTime;
+  }
 }
 
 // --- Implementação das Funções de Callback ---
@@ -221,13 +223,12 @@ void handleJardimLimiarMessage(AdafruitIO_Data *data) {
 }
 
 // --- Implementação das Funções Auxiliares ---
-void readCozinhaSensors() {
+void readSensors() {
+  // Cozinha
   valorGasAtual = analogRead(PINO_SENSOR_GAS_AO);
   chamaDetectada = (digitalRead(PINO_SENSOR_CHAMA_DO) == LOW);
   presencaDetectada = (digitalRead(PINO_SENSOR_PIR) == HIGH);
-}
-
-void readJardimSensor(){
+  // Jardinagem
   valorUmidadeRaw = analogRead(PINO_SENSOR_UMIDADE_SOLO);
   umidadePercent = map(valorUmidadeRaw, 2300, 4095, 100, 0);
   if(umidadePercent > 100) umidadePercent = 100;
@@ -281,7 +282,6 @@ void updateVisuals() {
   static unsigned long lastSlowBlinkTime = 0;
   static bool ledState = false;
   
-  // Reseta os LEDs para o estado padrão (desligado) antes de aplicar a nova lógica
   digitalWrite(PINO_FAROL_VERMELHO, LOW);
   digitalWrite(PINO_FAROL_AMARELO, LOW);
   digitalWrite(PINO_FAROL_VERDE, LOW);
@@ -332,19 +332,24 @@ void publishStatusOnChange() {
         strcpy(lastGasAlertaPublishedString, currentAlertaString);
         publishedSomething = true;
     }
-    char* currentJardimStatus = getJardimStatusString();
-    if(strcmp(currentJardimStatus, lastJardimStatusPublished) != 0) {
-      jardimStatusRegaFeed->save(currentJardimStatus);
-      strcpy(lastJardimStatusPublished, currentJardimStatus);
-      publishedSomething = true;
-    }
-    
-    // Publica a umidade periodicamente, mas dentro desta função para aproveitar o tempo
-    jardimUmidadeSoloFeed->save(umidadePercent);
 
     if (publishedSomething) {
         lastStatusChangePublishTime = currentTime;
     }
+}
+
+void publishData_IO_Periodic() {
+  Serial.println("Publicando dados periódicos (jardinagem)...");
+  
+  // Publica o valor percentual da umidade
+  jardimUmidadeSoloFeed->save(umidadePercent);
+
+  // Com base na umidade e no limiar, publica o status da rega
+  if (umidadePercent < limiarUmidade) {
+    jardimStatusRegaFeed->save(REGAR_AGORA_STR);
+  } else {
+    jardimStatusRegaFeed->save(UMIDADE_OK_STR);
+  }
 }
 
 char* getGasAlertaString() {
@@ -368,14 +373,6 @@ char* getGasAlertaString() {
             break;
     }
     return buffer;
-}
-
-char* getJardimStatusString() {
-  if(umidadePercent < limiarUmidade) {
-    return REGAR_AGORA_STR;
-  } else {
-    return UMIDADE_OK_STR;
-  }
 }
 
 String getStateString(SystemState state) {
