@@ -47,10 +47,12 @@ class _HomePageState extends State<HomePage> {
         // O título da AppBar muda conforme a tela selecionada.
         title: Padding(
           padding: const EdgeInsets.all(8.0),
-          child: Center(child: Text(
-              _titulosAppBar[_indiceAtual],
-              style: TextStyle(fontFamily: "Roboto", fontWeight: FontWeight.bold, fontSize: 32),
-            )),
+          child: Center(
+              child: Text(
+                _titulosAppBar[_indiceAtual],
+                style: TextStyle(fontFamily: "Roboto", fontWeight: FontWeight.bold, fontSize: 32),
+              )
+            ),
         ),
       ),
       // O corpo da tela exibe a tela selecionada da lista _telas.
