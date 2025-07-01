@@ -42,7 +42,7 @@ const long BLINK_INTERVAL_FAST = 250;
 const long BLINK_INTERVAL_SLOW = 1000;
 const long STATUS_CHANGE_PUBLISH_RATE_LIMIT = 2000;
 
-// --- Variáveis de Estado - Cozinha ---
+// --- Variáveis de Estado - Cozinha --
 int  valorGasAtual = 0;
 bool chamaDetectada = false;
 bool presencaDetectada = false;
