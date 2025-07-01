@@ -19,6 +19,13 @@ dependencies:
 
   flutter_dotenv: ^5.1.0 # Manter a chave API em segredo
 
+  flutter_local_notifications: ^17.1.2 # para notificações locais do flutter
+
+  flutter_svg: ^2.2.0 # para colocar imagens do formato SVG
+
+  flutter_colorpicker: ^1.1.0
+
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
@@ -30,3 +37,16 @@ flutter:
 
   assets:
     - .env
+    - assets/icons/
+
+fonts:
+  - family: Roboto
+    fonts:
+      - asset: fonts/roboto/Roboto-Bold.ttf
+        weight: 700
+      - asset: fonts/roboto/Roboto-Medium.ttf
+        weight: 500
+      - asset: fonts/roboto/Roboto-Regular.ttf
+        weight: 400
+      - asset: fonts/Poppins-semiBold.ttf
+        weight: 600
