@@ -6,6 +6,11 @@ import 'dart:math';
 Future<MqttServerClient> connect() async {
   final String username = dotenv.env["ADAFRUIT_IO_USERNAME"]!;
   final String key = dotenv.env["ADAFRUIT_IO_KEY"]!;
+
+  // RETIRAR ISSO ANTES DE PUBLICAR
+  print('username: $username');
+  print('chave AIO: $key');
+
   final idUnico = Random().nextInt(1000000).toString(); // Gera um ID único aleatório
 
   final client = MqttServerClient.withPort('io.adafruit.com', username, 1883);
@@ -23,7 +28,7 @@ Future<MqttServerClient> connect() async {
       .startClean()
       .withWillQos(MqttQos.atLeastOnce);
 
-  print('EXAMPLE::Adafruit client connecting....');
+  print('MQTT-SERVICE::Adafruit client connecting....');
   client.connectionMessage = connMess;
 
   try {
@@ -34,9 +39,9 @@ Future<MqttServerClient> connect() async {
   }
 
   if (client.connectionStatus!.state == MqttConnectionState.connected) {
-    print('EXAMPLE::Adafruit client connected');
+    print('MQTT-SERVICE::Adafruit client connected');
   } else {
-    print('EXAMPLE::Adafruit client connection failed - disconnecting, status is ${client.connectionStatus}');
+    print('MQTT-SEVICE::Adafruit client connection failed - disconnecting, status is ${client.connectionStatus}');
     client.disconnect();
   }
 
@@ -45,13 +50,13 @@ Future<MqttServerClient> connect() async {
 
 // callbacks
 void onConnected() {
-  print('Connected');
+  print('MQTT-SERVICE::Connected');
 }
 
 void onDisconnected() {
-  print('Disconnected');
+  print('MQTT-SERVICE::Disconnected');
 }
 
 void onSubscribed(String topic) {
-  print('Subscribed to topic: $topic');
+  print('MQTT-SERIVCE::Subscribed to topic: $topic');
 }

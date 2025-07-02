@@ -4,9 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 class Tela1 extends StatefulWidget  {
-
   const Tela1({super.key});
 
   @override
@@ -20,27 +21,51 @@ class _Tela1State extends State<Tela1> {
   @override
   void initState() {
     super.initState();
-    inicializarMqtt();
+    inicializarEstado();
   }
 
-  Future<void> inicializarMqtt() async {
+  Future<void> inicializarEstado() async {
     await dotenv.load();
     final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    final key = dotenv.env["ADAFRUIT_IO_KEY"];
+    final feed = "cozinha.valvula-gas-estado";
 
+    // Busca o último valor via REST API
+    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
+    try {
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'X-AIO-Key': key!},
+      );
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final valor = data['value'];
+        setState(() {
+          isValvulaAberta = valor == "ABERTA";
+          estadoValvulaTexto = isValvulaAberta
+              ? 'Válvula de gás está ABERTA'
+              : 'Válvula de gás está FECHADA';
+        });
+      }
+    } catch (e) {
+      print('Erro ao buscar valor inicial: $e');
+    }
+
+    // Depois conecta ao MQTT normalmente
+    await inicializarMqtt(usuario!);
+  }
+
+  Future<void> inicializarMqtt(String usuario) async {
     await connect().then((client) {
-      print('Conectado ao MQTT com sucesso!');
+      print('Conectado ao MQTT com sucesso');
 
-      // Inscreve-se nos tópicos necessários
       client.subscribe("$usuario/feeds/cozinha.valvula-gas-estado", MqttQos.atLeastOnce);
       client.subscribe("$usuario/feeds/cozinha.fogo-timer-app", MqttQos.atLeastOnce);
       client.subscribe("$usuario/feeds/cozinha.fogo-timer-reset", MqttQos.atLeastOnce);
       client.subscribe("$usuario/feeds/cozinha.gas-alerta", MqttQos.atLeastOnce);
-      client.subscribe("$usuario/feeds/cozinha.valvula-gas-controle", MqttQos.atLeastOnce);      
+      client.subscribe("$usuario/feeds/cozinha.valvula-gas-controle", MqttQos.atLeastOnce);
 
-      // Escuta as atualizações dos tópicos
       client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> c) {
-        print("Mensagem recebida do MQTT!");
-        // Processa todas as mensagens recebidas
         for (final msg in c) {
           final recMess = msg.payload as MqttPublishMessage;
           final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
@@ -55,7 +80,6 @@ class _Tela1State extends State<Tela1> {
                   : 'Válvula de gás está FECHADA';
             });
           }
-          // Aqui você pode adicionar lógica para outros tópicos se desejar
         }
       });
     }).catchError((error) {
