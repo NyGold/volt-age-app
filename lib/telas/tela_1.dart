@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 
@@ -92,24 +93,88 @@ class _Tela1State extends State<Tela1> {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16.0),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Scaffold(
+      body: Container(
+        padding: const EdgeInsets.all(16.0),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // muda o icone dependendo do estado da válvula
+              isValvulaAberta
+                  ? SvgPicture.asset(
+                      'assets/icons/fogao_ligado_certo.svg',
+                      width: 160,
+                      height: 160,
+                      colorFilter: ColorFilter.mode(
+                        Colors.deepOrange,
+                        BlendMode.srcIn,
+                      ),
+                    )
+                    // todo: adicionar icone de alerta quando a válvula estiver fechada, condizente ao icone acima
+                  : Icon(
+                      Icons.lock,
+                      color: Colors.green,
+                      size: 60,
+                    ),
+              const SizedBox(height: 16),
+              Text(
+                estadoValvulaTexto,
+                style: TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                  color: isValvulaAberta ? Colors.deepOrange : Colors.green,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              isValvulaAberta ? Icons.lock_open : Icons.lock,
-              color: isValvulaAberta ? Colors.green : Colors.red,
-              size: 60,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              estadoValvulaTexto,
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: isValvulaAberta ? Colors.green : Colors.red,
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: isValvulaAberta ? Colors.green : Colors.deepOrange,
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                // NÃO defina minimumSize ou fixedSize!
+                fixedSize: const Size(200, 60)
+              ),
+              onPressed: () {
+                final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+                final key = dotenv.env["ADAFRUIT_IO_KEY"];
+                final feed = "cozinha.valvula-gas-controle";
+                final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data';
+                final valor = isValvulaAberta ? "FECHADA" : "ABERTA";
+                final body = json.encode({"value": valor});
+                http.post(
+                  Uri.parse(url),
+                  headers: {
+                    'X-AIO-Key': key!,
+                    'Content-Type': 'application/json',
+                  },
+                  body: body,
+                ).then((response) {
+                  if (response.statusCode == 200) {
+                    print('Comando enviado com sucesso: $valor');
+                    setState(() {
+                      isValvulaAberta = !isValvulaAberta;
+                      estadoValvulaTexto = isValvulaAberta
+                          ? 'Válvula de gás está ABERTA'
+                          : 'Válvula de gás está FECHADA';
+                    });
+                  } else {
+                    print('Erro ao enviar comando: ${response.body}');
+                  }
+                }).catchError((error) {
+                  print('Erro ao enviar comando: $error');
+                });
+              },
+              child: Text(
+                isValvulaAberta ? 'Fechar Válvula' : 'Abrir Válvula',
+                style: const TextStyle(fontSize: 18, color: Colors.white),
               ),
             ),
           ],
