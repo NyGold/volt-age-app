@@ -1,7 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:volt_age_app/tela_inicial.dart'; // Certifique-se de que o nome do pacote está correto em 'pubspec.yaml'
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await NotificacaoService.inicializar();
+
+  // Solicita permissão para notificações (Android 13+)
+  final plugin = FlutterLocalNotificationsPlugin();
+  // Para Android, permissões de notificação são geralmente solicitadas automaticamente.
+  // Para iOS, você pode solicitar permissão assim:
+  await plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
+
   runApp(const MeuApp());
 }
 
@@ -29,5 +43,11 @@ class MeuApp extends StatelessWidget {
       // A primeira tela a ser exibida é a TelaInicial (splash screen).
       home: const TelaInicial(),
     );
+  }
+}
+
+class NotificacaoService {
+  static Future<void> inicializar() async {
+    // Inicialização do serviço de notificações
   }
 }
