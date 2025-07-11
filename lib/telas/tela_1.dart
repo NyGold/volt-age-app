@@ -1,5 +1,7 @@
 // tela do modulo de fogo
 
+// TODO: atualziar a lógica de esquecimento
+
 import 'package:flutter/material.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
 import 'package:mqtt_client/mqtt_client.dart';
@@ -7,6 +9,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'package:volt_age_app/services/notific_serv.dart';
 
 class Tela1 extends StatefulWidget  {
   const Tela1({super.key});
@@ -66,7 +69,7 @@ class _Tela1State extends State<Tela1> {
       client.subscribe("$usuario/feeds/cozinha.gas-alerta", MqttQos.atLeastOnce);
       client.subscribe("$usuario/feeds/cozinha.valvula-gas-controle", MqttQos.atLeastOnce);
 
-      client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> c) {
+      client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> c) async {
         for (final msg in c) {
           final recMess = msg.payload as MqttPublishMessage;
           final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
@@ -81,6 +84,17 @@ class _Tela1State extends State<Tela1> {
                   : 'Válvula de gás está FECHADA';
             });
           }
+
+          // lógica de enviar notificação quando receber alerta de gás
+
+          if (topico.endsWith('gas-alerta')) {
+            print('Alerta recebido: $payload');
+            if (payload == "ALARME_GAS") {
+              await NotificacaoService.enviarNotificacaoGasAberto();
+            }
+          }
+
+
         }
       });
     }).catchError((error) {
@@ -121,7 +135,7 @@ class _Tela1State extends State<Tela1> {
               Text(
                 estadoValvulaTexto,
                 style: TextStyle(
-                  fontSize: 22,
+                  fontSize: 27,
                   fontWeight: FontWeight.bold,
                   color: isValvulaAberta ? Colors.deepOrange : Colors.green,
                 ),
@@ -132,22 +146,20 @@ class _Tela1State extends State<Tela1> {
       ),
       bottomNavigationBar: Padding(
         padding: const EdgeInsets.all(16.0),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: isValvulaAberta ? Colors.green : Colors.deepOrange,
                 padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                // NÃO defina minimumSize ou fixedSize!
-                fixedSize: const Size(200, 60)
               ),
               onPressed: () {
                 final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
                 final key = dotenv.env["ADAFRUIT_IO_KEY"];
                 final feed = "cozinha.valvula-gas-controle";
                 final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data';
-                final valor = isValvulaAberta ? "FECHADA" : "ABERTA";
+                final valor = isValvulaAberta ? "FECHAR_AGORA" : "ABRIR_AGORA"; // <-- ajuste aqui!
                 final body = json.encode({"value": valor});
                 http.post(
                   Uri.parse(url),
@@ -159,12 +171,7 @@ class _Tela1State extends State<Tela1> {
                 ).then((response) {
                   if (response.statusCode == 200) {
                     print('Comando enviado com sucesso: $valor');
-                    setState(() {
-                      isValvulaAberta = !isValvulaAberta;
-                      estadoValvulaTexto = isValvulaAberta
-                          ? 'Válvula de gás está ABERTA'
-                          : 'Válvula de gás está FECHADA';
-                    });
+                    // Não altere o estado local aqui, espere o MQTT atualizar!
                   } else {
                     print('Erro ao enviar comando: ${response.body}');
                   }
@@ -177,6 +184,107 @@ class _Tela1State extends State<Tela1> {
                 style: const TextStyle(fontSize: 18, color: Colors.white),
               ),
             ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                backgroundColor: Colors.deepPurple,
+              ),
+              onPressed: () {
+                showModalBottomSheet(
+                  context: context,
+                  shape: const RoundedRectangleBorder(
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  ),
+                  builder: (context) {
+                    bool timerAtivo = false; // estado do toggle
+                    return StatefulBuilder(
+                      builder: (context, setModalState) {
+                        return Padding(
+                          padding: const EdgeInsets.all(24.0),
+                          child: Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'Configuração do Timer de Fogo',
+                                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                                ),
+                                const SizedBox(height: 24),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Text(
+                                      timerAtivo ? 'Timer Ativado' : 'Timer Desativado',
+                                      style: const TextStyle(fontSize: 16),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Switch(
+                                      value: timerAtivo,
+                                      activeColor: Colors.deepPurple,
+                                          onChanged: (value) async {
+                                            setModalState(() {
+                                              timerAtivo = value;
+                                            });
+                                            final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+                                            final key = dotenv.env["ADAFRUIT_IO_KEY"];
+                                            // Toggle publica ATIVAR_TIMER ou DESATIVAR_TIMER no fogo-timer-app
+                                            final feedTimer = "cozinha.fogo-timer-app";
+                                            final urlTimer = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feedTimer/data';
+                                            final valor = value ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
+                                            final body = json.encode({"value": valor});
+                                            await http.post(
+                                              Uri.parse(urlTimer),
+                                              headers: {
+                                                'X-AIO-Key': key!,
+                                                'Content-Type': 'application/json',
+                                              },
+                                              body: body,
+                                            );
+                                          },
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.deepPurple,
+                                  ),
+                                  onPressed: () async {
+                                    // Apenas envia o estado do toggle ao fechar
+                                    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+                                    final key = dotenv.env["ADAFRUIT_IO_KEY"];
+                                    final feed = "cozinha.fogo-timer-app";
+                                    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data';
+                                    final valorToggle = timerAtivo ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
+                                    final bodyToggle = json.encode({"value": valorToggle});
+                                    await http.post(
+                                      Uri.parse(url),
+                                      headers: {
+                                        'X-AIO-Key': key!,
+                                        'Content-Type': 'application/json',
+                                      },
+                                      body: bodyToggle,
+                                    );
+                                    Navigator.pop(context);
+                                  },
+                                  child: const Text('Fechar', style: TextStyle(color: Colors.white)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+              child: const Text(
+                'Configurações de Alerta',
+                style: TextStyle(fontSize: 18, color: Colors.white),
+                textAlign: TextAlign.center,
+              ),
+            )
           ],
         ),
       ),
