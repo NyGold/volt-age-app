@@ -7,10 +7,6 @@ Future<MqttServerClient> connect() async {
   final String username = dotenv.env["ADAFRUIT_IO_USERNAME"]!;
   final String key = dotenv.env["ADAFRUIT_IO_KEY"]!;
 
-  // RETIRAR ISSO ANTES DE PUBLICAR
-  print('username: $username');
-  print('chave AIO: $key');
-
   final idUnico = Random().nextInt(1000000).toString(); // Gera um ID único aleatório
 
   final client = MqttServerClient.withPort('io.adafruit.com', username, 1883);
