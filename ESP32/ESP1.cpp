@@ -1,4 +1,4 @@
-// --- Bibliotecas Necessárias ---
+// --- Bibliotecas Necessárias --
 #include <WiFi.h>
 #include <AdafruitIO_WiFi.h>
 
