@@ -1,17 +1,12 @@
-// tela do modulo de fogo
-
-// TODO: atualziar a lógica de esquecimento
-
 import 'package:flutter/material.dart';
-import 'package:volt_age_app/mqtt_services/mqtt.dart';
-import 'package:mqtt_client/mqtt_client.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_svg/flutter_svg.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+import 'package:volt_age_app/mqtt_services/mqtt.dart';
+import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'package:volt_age_app/services/notific_serv.dart';
 
-class Tela1 extends StatefulWidget  {
+class Tela1 extends StatefulWidget {
   const Tela1({super.key});
 
   @override
@@ -19,272 +14,323 @@ class Tela1 extends StatefulWidget  {
 }
 
 class _Tela1State extends State<Tela1> {
-  bool isValvulaAberta = false;
-  String estadoValvulaTexto = 'Aguardando dados...';
+  MqttClient? mqttClient;
+  String gasAlerta = "Carregando...";
+  String valvulaEstado = "Carregando...";
+  bool logicaEsquecimentoAtivada = false;
+
+  // Feeds da Cozinha
+  final feedGasAlerta = "gas-alerta";
+  final feedValvulaEstado = "valvula-gas-estado";
+  final feedValvulaControle = "valvula-gas-controle";
+  final feedFogoTimerApp = "fogo-timer-app";
+  final feedFogoTimerReset = "fogo-timer-reset";
 
   @override
   void initState() {
     super.initState();
-    inicializarEstado();
+    _inicializarConexao();
   }
 
-  Future<void> inicializarEstado() async {
+  Future<void> _inicializarConexao() async {
     await dotenv.load();
     final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
     final key = dotenv.env["ADAFRUIT_IO_KEY"];
-    final feed = "cozinha.valvula-gas-estado";
 
-    // Busca o último valor via REST API
-    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
+    if (usuario == null || key == null) {
+      if (mounted) {
+        setState(() {
+          gasAlerta = "Erro no .env";
+          valvulaEstado = "Erro no .env";
+        });
+      }
+      return;
+    }
+
+    // 1. Busca os valores iniciais via API REST para exibição imediata
+    await _buscarValoresIniciais(usuario, key);
+
+    // 2. Conecta ao Broker MQTT para receber atualizações em tempo real
+    try {
+      final client = await connect();
+      if (mounted) {
+        setState(() {
+          mqttClient = client;
+        });
+        _configurarMqttListeners(usuario);
+      }
+    } catch (e) {
+      print('Erro ao conectar ao MQTT: $e');
+      if (mounted) {
+        setState(() {
+          if (gasAlerta == "Carregando...") gasAlerta = "Erro de Conexão";
+          if (valvulaEstado == "Carregando...") valvulaEstado = "Erro de Conexão";
+        });
+      }
+    }
+  }
+
+  /// Busca o último valor de cada feed usando a API REST da Adafruit.
+  Future<void> _buscarValoresIniciais(String usuario, String key) async {
+    // Busca o último status de alerta de gás
+    await _fetchLastValue(usuario, key, feedGasAlerta, (valor) {
+      if (mounted) setState(() => gasAlerta = valor);
+    });
+
+    // Busca o último estado da válvula
+    await _fetchLastValue(usuario, key, feedValvulaEstado, (valor) {
+      if (mounted) setState(() => valvulaEstado = valor);
+    });
+  }
+
+  /// Função auxiliar para fazer a chamada HTTP para um feed específico.
+  Future<void> _fetchLastValue(String user, String key, String feed, Function(String) onValue) async {
+    final url = 'https://io.adafruit.com/api/v2/$user/feeds/$feed/data/last';
     try {
       final response = await http.get(
         Uri.parse(url),
-        headers: {'X-AIO-Key': key!},
+        headers: {'X-AIO-Key': key},
       );
-      if (response.statusCode == 200) {
+      if (response.statusCode == 200 && mounted) {
         final data = json.decode(response.body);
-        final valor = data['value'];
-        setState(() {
-          isValvulaAberta = valor == "ABERTA";
-          estadoValvulaTexto = isValvulaAberta
-              ? 'Válvula de gás está ABERTA'
-              : 'Válvula de gás está FECHADA';
-        });
+        final valor = data['value'].toString();
+        print('Valor inicial para $feed: $valor');
+        onValue(valor);
+      } else {
+        print('Não foi possível buscar valor inicial para $feed. Status: ${response.statusCode}');
       }
     } catch (e) {
-      print('Erro ao buscar valor inicial: $e');
+      print('Exceção ao buscar valor inicial para $feed: $e');
     }
-
-    // Depois conecta ao MQTT normalmente
-    await inicializarMqtt(usuario!);
   }
 
-  Future<void> inicializarMqtt(String usuario) async {
-    await connect().then((client) {
-      print('Conectado ao MQTT com sucesso');
 
-      client.subscribe("$usuario/feeds/cozinha.valvula-gas-estado", MqttQos.atLeastOnce);
-      client.subscribe("$usuario/feeds/cozinha.fogo-timer-app", MqttQos.atLeastOnce);
-      client.subscribe("$usuario/feeds/cozinha.fogo-timer-reset", MqttQos.atLeastOnce);
-      client.subscribe("$usuario/feeds/cozinha.gas-alerta", MqttQos.atLeastOnce);
-      client.subscribe("$usuario/feeds/cozinha.valvula-gas-controle", MqttQos.atLeastOnce);
+  void _configurarMqttListeners(String usuario) {
+    // Assinatura dos feeds de status para atualizações em tempo real
+    mqttClient?.subscribe("$usuario/feeds/$feedGasAlerta", MqttQos.atLeastOnce);
+    mqttClient?.subscribe("$usuario/feeds/$feedValvulaEstado", MqttQos.atLeastOnce);
 
-      client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> c) async {
-        for (final msg in c) {
-          final recMess = msg.payload as MqttPublishMessage;
-          final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-          final topico = msg.topic;
+    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage>> c) {
+      final recMess = c[0].payload as MqttPublishMessage;
+      final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
+      final topic = c[0].topic;
 
-          if (topico.endsWith('valvula-gas-estado')) {
-            print('Payload recebido: $payload');
-            setState(() {
-              isValvulaAberta = payload == "ABERTA";
-              estadoValvulaTexto = isValvulaAberta
-                  ? 'Válvula de gás está ABERTA'
-                  : 'Válvula de gás está FECHADA';
-            });
+      if (!mounted) return;
+
+      setState(() {
+        if (topic.endsWith(feedGasAlerta)) {
+          gasAlerta = payload;
+          if (payload == "FOGO_TIMER_ATIVO") {
+            logicaEsquecimentoAtivada = true;
           }
-
-          // lógica de enviar notificação quando receber alerta de gás
-
-          if (topico.endsWith('gas-alerta')) {
-            print('Alerta recebido: $payload');
-            if (payload == "ALARME_GAS") {
-              await NotificacaoService.enviarNotificacaoGasAberto();
-            }
-          }
-
-
+        } else if (topic.endsWith(feedValvulaEstado)) {
+          valvulaEstado = payload;
         }
       });
-    }).catchError((error) {
-      print('Erro ao conectar ao MQTT: $error');
-      setState(() {
-        estadoValvulaTexto = 'Erro ao conectar ao MQTT';
-      });
     });
+  }
+
+  void _publicarComando(String feed, String comando) {
+    if (mqttClient == null || mqttClient?.connectionStatus?.state != MqttConnectionState.connected) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Aguardando conexão... Tente novamente em alguns segundos.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    final comandoTopic = "$usuario/feeds/$feed";
+    final builder = MqttClientPayloadBuilder();
+    builder.addString(comando);
+
+    print('Publicando no tópico $comandoTopic: $comando');
+    mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        padding: const EdgeInsets.all(16.0),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // muda o icone dependendo do estado da válvula
-              isValvulaAberta
-                  ? SvgPicture.asset(
-                      'assets/icons/fogao_ligado_certo.svg',
-                      width: 160,
-                      height: 160,
-                      colorFilter: ColorFilter.mode(
-                        Colors.deepOrange,
-                        BlendMode.srcIn,
-                      ),
-                    )
-                    // todo: adicionar icone de alerta quando a válvula estiver fechada, condizente ao icone acima
-                  : Icon(
-                      Icons.lock,
-                      color: Colors.green,
-                      size: 60,
-                    ),
-              const SizedBox(height: 16),
-              Text(
-                estadoValvulaTexto,
-                style: TextStyle(
-                  fontSize: 27,
-                  fontWeight: FontWeight.bold,
-                  color: isValvulaAberta ? Colors.deepOrange : Colors.green,
-                ),
-              ),
-            ],
-          ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 20),
+            _buildCardStatusPrincipal(),
+            const SizedBox(height: 20),
+            _buildCardControleValvula(),
+            const SizedBox(height: 20),
+            _buildCardLogicaEsquecimento(),
+          ],
         ),
       ),
-      bottomNavigationBar: Padding(
-        padding: const EdgeInsets.all(16.0),
+    );
+  }
+
+  // A ÚNICA MUDANÇA ESTÁ NESTE WIDGET ABAIXO
+  Widget _buildCardStatusPrincipal() {
+    final bool isAlert = gasAlerta.contains("ALARME") || gasAlerta.contains("FOGO_SEM_PRESENCA");
+    final Color statusColor = isAlert ? Colors.red.shade700 : Colors.green.shade700;
+    final IconData statusIcon = isAlert ? Icons.warning_amber_rounded : Icons.check_circle_outline_rounded;
+
+    // Função para traduzir o status bruto para uma mensagem amigável
+    String getMensagemStatus(String status) {
+      if (status.startsWith("FOGO_CONTANDO")) {
+        return "Contagem de segurança...";
+      }
+      switch (status) {
+        case "OK":
+          return "Tudo certo";
+        case "ALARME_GAS":
+          return "PERIGO: Gás vazando!";
+        case "FOGO_SEM_PRESENCA":
+          return "PERIGO: Fogão esquecido!";
+        case "ALERTA_APP":
+          return "Gás fechado pelo celular";
+        case "FOGO_TIMER_ATIVO":
+          return "Timer de segurança pausado";
+        default:
+          return status; // Retorna o status original se não for reconhecido
+      }
+    }
+
+    return Card(
+      elevation: 6,
+      color: isAlert ? Colors.red.shade50 : Colors.green.shade50,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isValvulaAberta ? Colors.green : Colors.deepOrange,
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              ),
-              onPressed: () {
-                final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-                final key = dotenv.env["ADAFRUIT_IO_KEY"];
-                final feed = "cozinha.valvula-gas-controle";
-                final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data';
-                final valor = isValvulaAberta ? "FECHAR_AGORA" : "ABRIR_AGORA"; // <-- ajuste aqui!
-                final body = json.encode({"value": valor});
-                http.post(
-                  Uri.parse(url),
-                  headers: {
-                    'X-AIO-Key': key!,
-                    'Content-Type': 'application/json',
-                  },
-                  body: body,
-                ).then((response) {
-                  if (response.statusCode == 200) {
-                    print('Comando enviado com sucesso: $valor');
-                    // Não altere o estado local aqui, espere o MQTT atualizar!
-                  } else {
-                    print('Erro ao enviar comando: ${response.body}');
-                  }
-                }).catchError((error) {
-                  print('Erro ao enviar comando: $error');
-                });
-              },
-              child: Text(
-                isValvulaAberta ? 'Fechar Válvula' : 'Abrir Válvula',
-                style: const TextStyle(fontSize: 18, color: Colors.white),
+            Icon(statusIcon, size: 60, color: statusColor),
+            const SizedBox(height: 12),
+            const Text(
+              'Status Geral da Cozinha',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              getMensagemStatus(gasAlerta), // Exibe a mensagem traduzida
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: statusColor),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardControleValvula() {
+    final bool isAberta = valvulaEstado.toUpperCase() == "ABERTA";
+
+    // Define o texto, a cor e o ícone com base no estado
+    final String statusTexto = isAberta ? "Gás Aberto" : "Gás Fechado";
+    final Color statusCor = isAberta ? Colors.green.shade800 : Colors.red.shade800;
+    final Color cardColor = isAberta ? Colors.green.shade100 : Colors.red.shade100;
+    final IconData statusIcon = isAberta ? Icons.lock_open_rounded : Icons.lock_rounded;
+
+    return Card(
+      elevation: 4,
+      color: cardColor, // Cor de fundo do card muda
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: BorderSide(color: statusCor, width: 1.5), // Borda para destaque
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            // Row para o status com ícone
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(statusIcon, color: statusCor, size: 32),
+                const SizedBox(width: 12),
+                Text(
+                  statusTexto,
+                  style: TextStyle(
+                    fontSize: 26, // Fonte maior
+                    fontWeight: FontWeight.bold,
+                    color: statusCor,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20), // Mais espaço
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: () => _publicarComando(feedValvulaControle, 'ABRIR_AGORA'),
+                  icon: const Icon(Icons.lock_open_rounded),
+                  label: const Text('ABRIR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade400,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    textStyle: const TextStyle(fontSize: 16),
+                  ),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () => _publicarComando(feedValvulaControle, 'FECHAR_AGORA'),
+                  icon: const Icon(Icons.lock_rounded),
+                  label: const Text('FECHAR'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade400,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    textStyle: const TextStyle(fontSize: 16),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardLogicaEsquecimento() {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          children: [
+            const Text('Segurança Contra Esquecimento', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            ListTile(
+              title: const Text('Pausar timer de segurança', style: TextStyle(fontSize: 16)),
+              trailing: Switch(
+                value: logicaEsquecimentoAtivada,
+                onChanged: (bool value) {
+                  setState(() {
+                    logicaEsquecimentoAtivada = value;
+                  });
+                  final comando = value ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
+                  _publicarComando(feedFogoTimerApp, comando);
+                },
+                activeTrackColor: Colors.orange.shade200,
+                activeColor: Colors.orange.shade700,
               ),
             ),
-            const SizedBox(height: 12),
-            ElevatedButton(
+            const SizedBox(height: 10),
+            ElevatedButton.icon(
+              onPressed: () => _publicarComando(feedFogoTimerReset, 'RESET_TIMER'),
+              icon: const Icon(Icons.replay_rounded),
+              label: const Text('Resetar Alerta de Fogo'),
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-                backgroundColor: Colors.deepPurple,
+                backgroundColor: Colors.blue.shade400,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                textStyle: const TextStyle(fontSize: 16),
               ),
-              onPressed: () {
-                showModalBottomSheet(
-                  context: context,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-                  ),
-                  builder: (context) {
-                    bool timerAtivo = false; // estado do toggle
-                    return StatefulBuilder(
-                      builder: (context, setModalState) {
-                        return Padding(
-                          padding: const EdgeInsets.all(24.0),
-                          child: Center(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Text(
-                                  'Configuração do Timer de Fogo',
-                                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-                                ),
-                                const SizedBox(height: 24),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Text(
-                                      timerAtivo ? 'Timer Ativado' : 'Timer Desativado',
-                                      style: const TextStyle(fontSize: 16),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Switch(
-                                      value: timerAtivo,
-                                      activeColor: Colors.deepPurple,
-                                          onChanged: (value) async {
-                                            setModalState(() {
-                                              timerAtivo = value;
-                                            });
-                                            final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-                                            final key = dotenv.env["ADAFRUIT_IO_KEY"];
-                                            // Toggle publica ATIVAR_TIMER ou DESATIVAR_TIMER no fogo-timer-app
-                                            final feedTimer = "cozinha.fogo-timer-app";
-                                            final urlTimer = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feedTimer/data';
-                                            final valor = value ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
-                                            final body = json.encode({"value": valor});
-                                            await http.post(
-                                              Uri.parse(urlTimer),
-                                              headers: {
-                                                'X-AIO-Key': key!,
-                                                'Content-Type': 'application/json',
-                                              },
-                                              body: body,
-                                            );
-                                          },
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 16),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.deepPurple,
-                                  ),
-                                  onPressed: () async {
-                                    // Apenas envia o estado do toggle ao fechar
-                                    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-                                    final key = dotenv.env["ADAFRUIT_IO_KEY"];
-                                    final feed = "cozinha.fogo-timer-app";
-                                    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data';
-                                    final valorToggle = timerAtivo ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
-                                    final bodyToggle = json.encode({"value": valorToggle});
-                                    await http.post(
-                                      Uri.parse(url),
-                                      headers: {
-                                        'X-AIO-Key': key!,
-                                        'Content-Type': 'application/json',
-                                      },
-                                      body: bodyToggle,
-                                    );
-                                    Navigator.pop(context);
-                                  },
-                                  child: const Text('Fechar', style: TextStyle(color: Colors.white)),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    );
-                  },
-                );
-              },
-              child: const Text(
-                'Configurações de Alerta',
-                style: TextStyle(fontSize: 18, color: Colors.white),
-                textAlign: TextAlign.center,
-              ),
-            )
+            ),
           ],
         ),
       ),

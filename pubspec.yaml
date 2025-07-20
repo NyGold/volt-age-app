@@ -1,56 +1,45 @@
 name: volt_age_app
-description: Um app para os idosos!
-
-publish_to: 'none' # Remove this line if you wish to publish to pub.dev
-
-version: 0.0.1+1
+description: "A new Flutter project."
+publish_to: 'none' 
+version: 1.0.0+1
 
 environment:
-  sdk: '>=2.19.4 <4.0.0'
+  sdk: '>=3.3.1 <4.0.0'
 
 dependencies:
   flutter:
     sdk: flutter
-
-  english_words: ^4.0.0
-  provider: ^6.0.0
-
-  mqtt_client: ^10.1.1 # Verifique a versão mais recente no pub.dev 
-
-  flutter_dotenv: ^5.1.0 # Manter a chave API em segredo
-
-  flutter_local_notifications: ^17.1.2 # para notificações locais do flutter
-
-  flutter_svg: ^2.2.0 # para colocar imagens do formato SVG
-
-  flutter_colorpicker: ^1.1.0
-
-  http: ^1.4.0
-
-  shared_preferences: ^2.2.0
-
+  
+  # Ícones padrão do iOS
+  cupertino_icons: ^1.0.6
+  
+  # Cliente MQTT para comunicação em tempo real
+  mqtt_client: ^10.0.0
+  
+  # Para carregar variáveis de ambiente do arquivo .env
+  flutter_dotenv: ^5.1.0
+  
+  # Para fazer chamadas HTTP (API REST)
+  http: ^1.2.1
+  
+  # Para exibir notificações locais no dispositivo
+  flutter_local_notifications: ^17.1.2
+  
+  # Pacote de widgets para criar medidores (gauges) visuais
+  # Adicionado para corrigir os erros e implementar o medidor de umidade
+  syncfusion_flutter_gauges: ^25.2.7
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  
+  # Ferramentas de análise de código para manter a qualidade
+  flutter_lints: ^3.0.0
 
-  flutter_lints: ^6.0.0
-
+# Configurações específicas do Flutter
 flutter:
   uses-material-design: true
-
+  
+  # Define os assets que serão incluídos no app
   assets:
     - .env
-    - assets/icons/
-
-fonts:
-  - family: Roboto
-    fonts:
-      - asset: fonts/roboto/Roboto-Bold.ttf
-        weight: 700
-      - asset: fonts/roboto/Roboto-Medium.ttf
-        weight: 500
-      - asset: fonts/roboto/Roboto-Regular.ttf
-        weight: 400
-      - asset: fonts/Poppins-semiBold.ttf
-        weight: 600

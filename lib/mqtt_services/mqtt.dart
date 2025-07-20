@@ -1,58 +1,73 @@
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'dart:math';
+import 'dart:io'; // Import necessário para SecurityContext
 
-Future<MqttServerClient> connect() async {
-  final String username = dotenv.env["ADAFRUIT_IO_USERNAME"]!;
-  final String key = dotenv.env["ADAFRUIT_IO_KEY"]!;
+// A função agora aceita um parâmetro opcional {bool isBackground = false}
+Future<MqttClient> connect({bool isBackground = false}) async {
+  await dotenv.load();
+  
+  final String broker = dotenv.env['ADAFRUIT_IO_URL'] ?? 'io.adafruit.com';
+  final String portString = dotenv.env['ADAFRUIT_IO_PORT'] ?? '8883';
+  final int port = int.tryParse(portString) ?? 8883;
 
-  final idUnico = Random().nextInt(1000000).toString(); // Gera um ID único aleatório
+  final String user = dotenv.env['ADAFRUIT_IO_USERNAME'] ?? '';
+  final String key = dotenv.env['ADAFRUIT_IO_KEY'] ?? '';
+  
+  final String clientId = isBackground 
+    ? 'volt_age_background_${DateTime.now().millisecondsSinceEpoch}' 
+    : 'volt_age_app_mobile';
 
-  final client = MqttServerClient.withPort('io.adafruit.com', username, 1883);
+  // --- ADICIONADO PARA DEBUG ---
+  print('--- Tentando conectar ao MQTT ---');
+  print('Broker: $broker');
+  print('Porta: $port');
+  print('Usuário: $user');
+  print('Chave AIO: ${key.isNotEmpty ? "${key.substring(0, 4)}..." : "NÃO ENCONTRADA"}');
+  print('ID do Cliente: $clientId');
+  print('---------------------------------');
+  // --- FIM DO CÓDIGO DE DEBUG ---
 
-  client.logging(on: true);
+  MqttServerClient client = MqttServerClient.withPort(broker, clientId, port);
+  
+  // **CORREÇÃO:** Força o uso de uma conexão segura (TLS), que é necessária para a porta 8883.
+  client.secure = true;
+  client.securityContext = SecurityContext.defaultContext;
+  client.logging(on: false);
+  client.setProtocolV311();
   client.keepAlivePeriod = 60;
   client.onDisconnected = onDisconnected;
   client.onConnected = onConnected;
   client.onSubscribed = onSubscribed;
 
   final connMess = MqttConnectMessage()
-      .withClientIdentifier(idUnico)
-      .withWillTopic('willtopic') // Tópico de "última vontade" (opcional)
+      .withClientIdentifier(clientId)
+      .authenticateAs(user, key)
+      .withWillTopic('willtopic')
       .withWillMessage('My Will message')
       .startClean()
       .withWillQos(MqttQos.atLeastOnce);
-
-  print('MQTT-SERVICE::Adafruit client connecting....');
   client.connectionMessage = connMess;
 
   try {
-    await client.connect(username, key);
-  } catch (e) {
+    await client.connect();
+  } on Exception catch (e) {
     print('Exception: $e');
     client.disconnect();
-  }
-
-  if (client.connectionStatus!.state == MqttConnectionState.connected) {
-    print('MQTT-SERVICE::Adafruit client connected');
-  } else {
-    print('MQTT-SEVICE::Adafruit client connection failed - disconnecting, status is ${client.connectionStatus}');
-    client.disconnect();
+    rethrow;
   }
 
   return client;
 }
 
-// callbacks
-void onConnected() {
-  print('MQTT-SERVICE::Connected');
+void onSubscribed(String topic) {
+  print('Subscription confirmed for topic $topic');
 }
 
 void onDisconnected() {
-  print('MQTT-SERVICE::Disconnected');
+  print('Disconnected');
 }
 
-void onSubscribed(String topic) {
-  print('MQTT-SERIVCE::Subscribed to topic: $topic');
+void onConnected() {
+  print('Connected');
 }
