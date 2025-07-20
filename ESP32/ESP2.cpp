@@ -3,7 +3,7 @@
 #include <AdafruitIO_WiFi.h>
 #include <FastLED.h>
 #include <Wire.h>
-#include <Adafruit_BH1750.h>
+#include <BH1750.h> // Biblioteca "claws/BH1750"
 
 // --- Inclui o arquivo de segredos ---
 #include "secrets.h" // Deve conter WIFI_SSID, WIFI_PASS, IO_USERNAME, IO_KEY
@@ -19,6 +19,7 @@ AdafruitIO_Feed *iluminacaoStatusFeed = io.feed("iluminacao-status");
 const int PINO_PIR      = 15; // Pino para o sensor de presença
 const int PINO_FITA_LED = 2;  // Pino de dados da fita de LED WS2812B
 const int NUM_LEDS      = 30; // Número de LEDs na sua fita
+const int BRIGHTNESS    = 150;// Brilho da fita (0-255)
 
 // --- Constantes de Lógica ---
 const long TEMPO_LUZ_ACESA_APOS_MOVIMENTO = 30000; // 30 segundos em milissegundos
@@ -30,7 +31,7 @@ enum IluminacaoMode { AUTOMATICO, MANUAL_LIGADO, MANUAL_DESLIGADO };
 IluminacaoMode currentMode = AUTOMATICO;
 
 CRGB leds[NUM_LEDS];
-uint32_t corAtual = CRGB::FloralWhite; // Cor padrão
+uint32_t corAtual = CRGB::FloralWhite; // Cor padrão inicial
 bool luzesEstaoAcesas = false;
 unsigned long ultimoMovimentoDetectado = 0;
 bool escuroDetectado = false;
@@ -40,7 +41,7 @@ bool ultimoStatusPublicado = false;
 unsigned long ultimoPublishTime = 0;
 
 // --- Instância dos Sensores ---
-Adafruit_BH1750 lightSensor;
+BH1750 lightSensor;
 
 // --- Protótipos ---
 void handleIluminacaoComando(AdafruitIO_Data *data);
@@ -56,10 +57,11 @@ void setup() {
 
   // Inicializa a fita de LED
   FastLED.addLeds<WS2812B, PINO_FITA_LED, GRB>(leds, NUM_LEDS);
-  FastLED.setBrightness(150);
+  FastLED.setBrightness(BRIGHTNESS);
   desligarLuzes(); // Garante que começa desligada
 
   // Inicializa o sensor de luz BH1750
+  Wire.begin();
   if (!lightSensor.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
     Serial.println(F("Erro ao encontrar o sensor BH1750! Verifique a fiação I2C."));
   }
@@ -122,11 +124,11 @@ void handleIluminacaoComando(AdafruitIO_Data *data) {
   Serial.print(comando);
   Serial.println("'");
 
-  if (comando == "LIGAR_MANUAL") {
+  if (comando.equalsIgnoreCase("LIGAR_MANUAL")) {
     currentMode = MANUAL_LIGADO;
-  } else if (comando == "DESLIGAR_MANUAL") {
+  } else if (comando.equalsIgnoreCase("DESLIGAR_MANUAL")) {
     currentMode = MANUAL_DESLIGADO;
-  } else if (comando == "AUTOMATICO") {
+  } else if (comando.equalsIgnoreCase("AUTOMATICO")) {
     currentMode = AUTOMATICO;
   } else if (comando.startsWith("#")) {
     parseHexColor(comando.c_str());
@@ -156,7 +158,8 @@ void parseHexColor(const char* hexstring) {
   corAtual = number;
   // Se as luzes já estiverem acesas no modo manual, atualiza a cor imediatamente
   if (luzesEstaoAcesas && currentMode == MANUAL_LIGADO) {
-    ligarLuzes();
+    fill_solid(leds, NUM_LEDS, corAtual); // Re-aplica a cor
+    FastLED.show();
   }
 }
 
@@ -164,12 +167,9 @@ void publishStatusOnChange() {
   unsigned long currentTime = millis();
   // Publica o status da luz apenas se ele mudou E passou o tempo de rate limit
   if (luzesEstaoAcesas != ultimoStatusPublicado && currentTime - ultimoPublishTime > PUBLISH_STATUS_RATE_LIMIT) {
-    Serial.print("Publicando novo status da luz: ");
     if (luzesEstaoAcesas) {
-      Serial.println("ACESA");
       iluminacaoStatusFeed->save("ACESA");
     } else {
-      Serial.println("APAGADA");
       iluminacaoStatusFeed->save("APAGADA");
     }
     ultimoStatusPublicado = luzesEstaoAcesas;
