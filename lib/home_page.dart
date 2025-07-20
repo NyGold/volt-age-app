@@ -3,6 +3,9 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
 import 'package:volt_age_app/services/notific_serv.dart';
+
+import 'dart:async';
+
 import 'package:volt_age_app/telas/tela_1.dart';
 import 'package:volt_age_app/telas/tela_2.dart';
 import 'package:volt_age_app/telas/tela_3.dart';
@@ -18,6 +21,18 @@ class _HomePageState extends State<HomePage> {
   int _paginaAtual = 0;
   final PageController _pageController = PageController();
   MqttClient? mqttClient;
+
+  // Streams para receber atualizações
+  final StreamController<String> _gasAlertaController = StreamController<String>.broadcast();
+  final StreamController<String> _valvulaEstadoController = StreamController<String>.broadcast();
+
+  // boa prática de fechar os steams
+  @override
+  void dispose() {
+    _gasAlertaController.close();
+    _valvulaEstadoController.close();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -37,6 +52,25 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       print('Erro na conexão MQTT Global: $e');
     }
+
+    mqttClient!.updates!.listen((List<MqttReceivedMessage<MqttMessage?>>? c) {
+      final recMess = c![0].payload as MqttPublishMessage;
+      final pt = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
+      final topic = c[0].topic;
+
+      print('MQTT_LOGS:: Mensagem recebida: Tópico: <$topic>, Payload: <-- $pt -->');
+      print('');
+
+      // Direciona a mensagem para o "cano" (Stream) correto
+      if (topic.endsWith('/feeds/gas-alerta')) {
+        _gasAlertaController.add(pt); // Adiciona a mensagem ao stream do gasAlerta
+      }
+      if (topic.endsWith('/feeds/valvula-gas-estado')) {
+        _valvulaEstadoController.add(pt); // Adiciona a mensagem ao stream do valvulaEstado
+      }
+      // Adicione outros `if` para outros feeds que você queira ouvir.
+    });
+
   }
 
   void _configurarListenerDeNotificacoes() {
@@ -106,10 +140,14 @@ class _HomePageState extends State<HomePage> {
             _paginaAtual = index;
           });
         },
-        children: const [
-          Tela1(),
-          Tela2(),
-          Tela3(),
+        children: [
+          Tela1(
+              mqttClient: mqttClient,
+              gasAlertaStream: _gasAlertaController.stream,
+              valvulaEstadoStream: _valvulaEstadoController.stream
+            ),
+          Tela2(mqttClient: mqttClient),
+          Tela3(mqttClient: mqttClient),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

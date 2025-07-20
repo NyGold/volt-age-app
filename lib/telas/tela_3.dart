@@ -1,12 +1,23 @@
+/* TODO: 
+* 1 criar os stream na home_page com os tópicos que ele vai ouvir
+* 2 passar os streams para as telas que vão ouvir
+* 3 criar os streams nas telas que vão ouvir
+* 4 criar os listeners para atualizar o estado das telas
+* 5 criar os métodos de publicar comandos para cada tela
+* 6 criar os métodos de publicar comandos em background para cada tela 
+
+* qualquer coisa é só ver o gemini ou ver tela_1 que já está quase tudo certo.
+*/
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:volt_age_app/mqtt_services/mqtt.dart'; // Mantenha seu import do serviço MQTT
 import 'package:mqtt_client/mqtt_client.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+
 
 class Tela3 extends StatefulWidget {
-  const Tela3({super.key});
+  final MqttClient? mqttClient;
+
+  const Tela3({super.key, this.mqttClient});
 
   @override
   State<Tela3> createState() => _Tela3State();
@@ -24,63 +35,6 @@ class _Tela3State extends State<Tela3> {
   @override
   void initState() {
     super.initState();
-    _inicializarConexao();
-  }
-
-  Future<void> _inicializarConexao() async {
-    await dotenv.load();
-    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-    final key = dotenv.env["ADAFRUIT_IO_KEY"];
-
-    if (usuario == null || key == null) {
-      if (mounted) setState(() => luzStatus = "Erro: .env");
-      return;
-    }
-
-    // 1. Busca o estado inicial via API REST
-    await _buscarEstadoInicial(usuario, key);
-
-    // 2. Conecta ao Broker MQTT
-    try {
-      final client = await connect();
-      if (mounted) setState(() => mqttClient = client);
-      print('MQTT Conectado com sucesso!');
-      _configurarMqttListeners(usuario);
-    } catch (e) {
-      print('Erro ao conectar ao MQTT: $e');
-      if (mounted) setState(() => luzStatus = 'Erro de conexão');
-    }
-  }
-
-  Future<void> _buscarEstadoInicial(String usuario, String key) async {
-    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feedStatus/data/last';
-    try {
-      final response = await http.get(Uri.parse(url), headers: {'X-AIO-Key': key});
-      if (response.statusCode == 200 && mounted) {
-        final data = json.decode(response.body);
-        setState(() => luzStatus = data['value'].toString());
-      } else {
-         if (mounted) setState(() => luzStatus = 'Sem dados');
-      }
-    } catch (e) {
-      print('Erro ao buscar valor inicial: $e');
-      if (mounted) setState(() => luzStatus = 'Falha ao buscar');
-    }
-  }
-
-  void _configurarMqttListeners(String usuario) {
-    final statusTopic = "$usuario/feeds/$feedStatus";
-    mqttClient?.subscribe(statusTopic, MqttQos.atLeastOnce);
-
-    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage>> c) {
-      final recMess = c[0].payload as MqttPublishMessage;
-      final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-      final topic = c[0].topic;
-
-      if (topic == statusTopic && mounted) {
-        setState(() => luzStatus = payload);
-      }
-    });
   }
 
   void _publicarComando(String comando) {

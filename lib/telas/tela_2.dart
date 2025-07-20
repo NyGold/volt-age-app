@@ -1,14 +1,22 @@
+/* TODO: 
+* 1 criar os stream na home_page com os tópicos que ele vai ouvir
+* 2 passar os streams para as telas que vão ouvir
+* 3 criar os streams nas telas que vão ouvir
+* 4 criar os listeners para atualizar o estado das telas
+* 5 criar os métodos de publicar comandos para cada tela
+* 6 criar os métodos de publicar comandos em background para cada tela 
+
+* qualquer coisa é só ver o gemini ou ver tela_1 que já está quase tudo certo.
+*/
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
-import 'package:volt_age_app/mqtt_services/mqtt.dart';
-import 'dart:async';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-
 class Tela2 extends StatefulWidget {
-  const Tela2({super.key});
+  final MqttClient? mqttClient;
+
+  const Tela2({super.key, this.mqttClient});
 
   @override
   State<Tela2> createState() => _Tela2State();
@@ -28,81 +36,6 @@ class _Tela2State extends State<Tela2> {
   @override
   void initState() {
     super.initState();
-    _inicializarConexao();
-  }
-
-  Future<void> _inicializarConexao() async {
-    await dotenv.load();
-    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-    final key = dotenv.env["ADAFRUIT_IO_KEY"];
-
-    if (usuario == null || key == null) {
-      if (mounted) setState(() => statusRega = "Erro no .env");
-      return;
-    }
-
-    await _buscarValoresIniciais(usuario, key);
-
-    try {
-      final client = await connect();
-      if (mounted) {
-        setState(() {
-          mqttClient = client;
-        });
-        _configurarMqttListeners(usuario);
-      }
-    } catch (e) {
-      print('Erro ao conectar ao MQTT: $e');
-      if (mounted && statusRega == "Carregando...") {
-        setState(() => statusRega = "Erro de Conexão");
-      }
-    }
-  }
-
-  Future<void> _buscarValoresIniciais(String usuario, String key) async {
-    await _fetchLastValue(usuario, key, feedUmidadeSolo, (valor) {
-      if (mounted) setState(() => umidadeSolo = double.tryParse(valor) ?? 0.0);
-    });
-    await _fetchLastValue(usuario, key, feedStatusRega, (valor) {
-      if (mounted) setState(() => statusRega = valor);
-    });
-    await _fetchLastValue(usuario, key, feedLimiarUmidade, (valor) {
-      if (mounted) setState(() => limiarUmidade = double.tryParse(valor) ?? 35.0);
-    });
-  }
-
-  Future<void> _fetchLastValue(String user, String key, String feed, Function(String) onValue) async {
-    final url = 'https://io.adafruit.com/api/v2/$user/feeds/$feed/data/last';
-    try {
-      final response = await http.get(Uri.parse(url), headers: {'X-AIO-Key': key});
-      if (response.statusCode == 200 && mounted) {
-        final data = json.decode(response.body);
-        onValue(data['value'].toString());
-      }
-    } catch (e) {
-      print('Exceção ao buscar valor inicial para $feed: $e');
-    }
-  }
-
-  void _configurarMqttListeners(String usuario) {
-    mqttClient?.subscribe("$usuario/feeds/$feedUmidadeSolo", MqttQos.atLeastOnce);
-    mqttClient?.subscribe("$usuario/feeds/$feedStatusRega", MqttQos.atLeastOnce);
-
-    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage>> c) {
-      final recMess = c[0].payload as MqttPublishMessage;
-      final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-      final topic = c[0].topic;
-
-      if (!mounted) return;
-
-      setState(() {
-        if (topic.endsWith(feedUmidadeSolo)) {
-          umidadeSolo = double.tryParse(payload) ?? umidadeSolo;
-        } else if (topic.endsWith(feedStatusRega)) {
-          statusRega = payload;
-        }
-      });
-    });
   }
 
   void _publicarLimiar(double valor) {

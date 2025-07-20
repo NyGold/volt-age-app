@@ -1,23 +1,35 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
-import 'package:volt_age_app/mqtt_services/mqtt.dart';
 import 'dart:async';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 
 class Tela1 extends StatefulWidget {
-  const Tela1({super.key});
+  final MqttClient? mqttClient;
+
+  final Stream<String>? gasAlertaStream;
+  final Stream<String>? valvulaEstadoStream;
+
+  const Tela1({
+    super.key, 
+    this.mqttClient,
+    this.gasAlertaStream,
+    this.valvulaEstadoStream,
+  });
 
   @override
   State<Tela1> createState() => _Tela1State();
 }
+
 
 class _Tela1State extends State<Tela1> {
   MqttClient? mqttClient;
   String gasAlerta = "Carregando...";
   String valvulaEstado = "Carregando...";
   bool logicaEsquecimentoAtivada = false;
+
+  //streams para receber atualizações
+  StreamSubscription? _gasAlertaSubscription;
+  StreamSubscription? _valvulaEstadoSubscription;
 
   // Feeds da Cozinha
   final feedGasAlerta = "gas-alerta";
@@ -29,109 +41,33 @@ class _Tela1State extends State<Tela1> {
   @override
   void initState() {
     super.initState();
-    _inicializarConexao();
-  }
 
-  Future<void> _inicializarConexao() async {
-    await dotenv.load();
-    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-    final key = dotenv.env["ADAFRUIT_IO_KEY"];
-
-    if (usuario == null || key == null) {
-      if (mounted) {
+      _gasAlertaSubscription = widget.gasAlertaStream?.listen((novaMensagem) {
+        print("TELA 1: Novo status de gás recebido: $novaMensagem");
         setState(() {
-          gasAlerta = "Erro no .env";
-          valvulaEstado = "Erro no .env";
+          gasAlerta = novaMensagem; // ATUALIZA O ESTADO!
         });
-      }
-      return;
-    }
-
-    // 1. Busca os valores iniciais via API REST para exibição imediata
-    await _buscarValoresIniciais(usuario, key);
-
-    // 2. Conecta ao Broker MQTT para receber atualizações em tempo real
-    try {
-      final client = await connect();
-      if (mounted) {
-        setState(() {
-          mqttClient = client;
-        });
-        _configurarMqttListeners(usuario);
-      }
-    } catch (e) {
-      print('Erro ao conectar ao MQTT: $e');
-      if (mounted) {
-        setState(() {
-          if (gasAlerta == "Carregando...") gasAlerta = "Erro de Conexão";
-          if (valvulaEstado == "Carregando...") valvulaEstado = "Erro de Conexão";
-        });
-      }
-    }
-  }
-
-  /// Busca o último valor de cada feed usando a API REST da Adafruit.
-  Future<void> _buscarValoresIniciais(String usuario, String key) async {
-    // Busca o último status de alerta de gás
-    await _fetchLastValue(usuario, key, feedGasAlerta, (valor) {
-      if (mounted) setState(() => gasAlerta = valor);
-    });
-
-    // Busca o último estado da válvula
-    await _fetchLastValue(usuario, key, feedValvulaEstado, (valor) {
-      if (mounted) setState(() => valvulaEstado = valor);
-    });
-  }
-
-  /// Função auxiliar para fazer a chamada HTTP para um feed específico.
-  Future<void> _fetchLastValue(String user, String key, String feed, Function(String) onValue) async {
-    final url = 'https://io.adafruit.com/api/v2/$user/feeds/$feed/data/last';
-    try {
-      final response = await http.get(
-        Uri.parse(url),
-        headers: {'X-AIO-Key': key},
-      );
-      if (response.statusCode == 200 && mounted) {
-        final data = json.decode(response.body);
-        final valor = data['value'].toString();
-        print('Valor inicial para $feed: $valor');
-        onValue(valor);
-      } else {
-        print('Não foi possível buscar valor inicial para $feed. Status: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Exceção ao buscar valor inicial para $feed: $e');
-    }
-  }
-
-
-  void _configurarMqttListeners(String usuario) {
-    // Assinatura dos feeds de status para atualizações em tempo real
-    mqttClient?.subscribe("$usuario/feeds/$feedGasAlerta", MqttQos.atLeastOnce);
-    mqttClient?.subscribe("$usuario/feeds/$feedValvulaEstado", MqttQos.atLeastOnce);
-
-    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage>> c) {
-      final recMess = c[0].payload as MqttPublishMessage;
-      final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-      final topic = c[0].topic;
-
-      if (!mounted) return;
-
-      setState(() {
-        if (topic.endsWith(feedGasAlerta)) {
-          gasAlerta = payload;
-          if (payload == "FOGO_TIMER_ATIVO") {
-            logicaEsquecimentoAtivada = true;
-          }
-        } else if (topic.endsWith(feedValvulaEstado)) {
-          valvulaEstado = payload;
-        }
       });
-    });
-  }
+
+      _valvulaEstadoSubscription = widget.valvulaEstadoStream?.listen((novoEstado) {
+        print("TELA 1: Novo estado da válvula recebido: $novoEstado");
+        setState(() {
+          valvulaEstado = novoEstado; // ATUALIZA O ESTADO!
+        });
+      });
+    }
+
+  @override
+  void dispose() {
+    _gasAlertaSubscription?.cancel();
+    _valvulaEstadoSubscription?.cancel();
+    super.dispose(); 
+  } 
+
 
   void _publicarComando(String feed, String comando) {
-    if (mqttClient == null || mqttClient?.connectionStatus?.state != MqttConnectionState.connected) {
+    // Use "widget.mqttClient" para acessar a conexão passada pela HomePage
+    if (widget.mqttClient == null || widget.mqttClient?.connectionStatus?.state != MqttConnectionState.connected) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Aguardando conexão... Tente novamente em alguns segundos.'),
@@ -147,7 +83,8 @@ class _Tela1State extends State<Tela1> {
     builder.addString(comando);
 
     print('Publicando no tópico $comandoTopic: $comando');
-    mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
+    // Use "widget.mqttClient" aqui também
+    widget.mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
   }
 
   @override
@@ -170,7 +107,6 @@ class _Tela1State extends State<Tela1> {
     );
   }
 
-  // A ÚNICA MUDANÇA ESTÁ NESTE WIDGET ABAIXO
   Widget _buildCardStatusPrincipal() {
     final bool isAlert = gasAlerta.contains("ALARME") || gasAlerta.contains("FOGO_SEM_PRESENCA");
     final Color statusColor = isAlert ? Colors.red.shade700 : Colors.green.shade700;
