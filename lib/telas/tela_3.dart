@@ -1,6 +1,7 @@
 // tela do modulo de iluminação
 
 import 'package:flutter/material.dart';
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
 import 'package:mqtt_client/mqtt_client.dart';
@@ -15,8 +16,8 @@ class Tela3 extends StatefulWidget {
 }
 
 class _Tela3State extends State<Tela3> {
-  String luzEstado = 'Aguardando dados...';
-  String luzIntensidade = 'Aguardando dados...';
+  String luzStatus = 'Aguardando dados...';
+  Color corSelecionada = Colors.white;
 
   @override
   void initState() {
@@ -29,15 +30,12 @@ class _Tela3State extends State<Tela3> {
     final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
     final key = dotenv.env["ADAFRUIT_IO_KEY"];
 
-    // Busca o último valor de cada feed via REST API
-    await buscarValorFeed(usuario!, key!, "iluminacao.luz-estado", (valor) {
-      setState(() => luzEstado = valor);
-    });
-    await buscarValorFeed(usuario, key, "iluminacao.luz-intensidade", (valor) {
-      setState(() => luzIntensidade = valor);
+    // Busca o último valor do status via REST API
+    await buscarValorFeed(usuario!, key!, "iluminacao-status", (valor) {
+      setState(() => luzStatus = valor);
     });
 
-    // Depois conecta ao MQTT normalmente
+    // Conecta ao MQTT
     await inicializarMqtt(usuario);
   }
 
@@ -62,8 +60,8 @@ class _Tela3State extends State<Tela3> {
     await connect().then((client) {
       print('Conectado ao MQTT com sucesso!');
 
-      client.subscribe("$usuario/feeds/iluminacao.luz-estado", MqttQos.atLeastOnce);
-      client.subscribe("$usuario/feeds/iluminacao.luz-intensidade", MqttQos.atLeastOnce);
+      // Subscreve ao feed de status
+      client.subscribe("$usuario/feeds/iluminacao-status", MqttQos.atLeastOnce);
 
       client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> c) {
         for (final msg in c) {
@@ -71,20 +69,52 @@ class _Tela3State extends State<Tela3> {
           final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
           final topico = msg.topic;
 
-          if (topico.endsWith('luz-estado')) {
-            setState(() => luzEstado = payload);
-          } else if (topico.endsWith('luz-intensidade')) {
-            setState(() => luzIntensidade = payload);
+          if (topico.endsWith('iluminacao-status')) {
+            setState(() => luzStatus = payload);
           }
         }
       });
     }).catchError((error) {
       print('Erro ao conectar ao MQTT: $error');
       setState(() {
-        luzEstado = 'Erro ao conectar ao MQTT';
-        luzIntensidade = 'Erro ao conectar ao MQTT';
+        luzStatus = 'Erro ao conectar ao MQTT';
       });
     });
+  }
+
+  String colorToHex(Color color) {
+    return '#${color.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+  }
+
+  Future<void> enviarComando(String comando) async {
+    await dotenv.load();
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    final key = dotenv.env["ADAFRUIT_IO_KEY"];
+    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/iluminacao-comando/data';
+    try {
+      final response = await http.post(
+        Uri.parse(url),
+        headers: {
+          'X-AIO-Key': key!,
+          'Content-Type': 'application/json',
+        },
+        body: json.encode({'value': comando}),
+      );
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Comando enviado: $comando')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Falha ao enviar comando')),
+        );
+      }
+    } catch (e) {
+      print('Erro ao enviar comando: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao enviar comando')),
+      );
+    }
   }
 
   @override
@@ -94,9 +124,64 @@ class _Tela3State extends State<Tela3> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text('Estado da luz: $luzEstado', style: const TextStyle(fontSize: 18)),
+          Text('Status das luzes: $luzStatus', style: const TextStyle(fontSize: 18)),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              ElevatedButton(
+                onPressed: () => enviarComando('AUTOMATICO'),
+                child: const Text('LED Automático'),
+              ),
+              ElevatedButton(
+                onPressed: () => enviarComando('LIGAR_MANUAL'),
+                child: const Text('Ligar LED'),
+              ),
+              ElevatedButton(
+                onPressed: () => enviarComando('DESLIGAR_MANUAL'),
+                child: const Text('Desligar LED'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Text('Escolha a cor da fita de LED:', style: const TextStyle(fontSize: 16)),
           const SizedBox(height: 8),
-          Text('Intensidade da luz: $luzIntensidade', style: const TextStyle(fontSize: 18)),
+          ColorPicker(
+            pickerColor: corSelecionada,
+            onColorChanged: (color) {
+              setState(() {
+                corSelecionada = color;
+              });
+            },
+            pickerAreaHeightPercent: 0.8,
+            enableAlpha: false,
+            displayThumbColor: true,
+            showLabel: false,
+            pickerAreaBorderRadius: const BorderRadius.all(Radius.circular(8)),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: corSelecionada,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.grey),
+                ),
+              ),
+              const SizedBox(width: 16),
+              ElevatedButton(
+                onPressed: () {
+                  final hex = colorToHex(corSelecionada);
+                  enviarComando(hex);
+                },
+                child: const Text('Enviar Cor'),
+              ),
+            ],
+          ),
         ],
       ),
     );
