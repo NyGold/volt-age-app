@@ -1,25 +1,38 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
+import 'dart:io'; // Import necessário para SecurityContext
 
 // A função agora aceita um parâmetro opcional {bool isBackground = false}
 Future<MqttClient> connect({bool isBackground = false}) async {
   await dotenv.load();
-  final String broker = dotenv.env['ADAFRUIT_IO_URL'] ?? '';
   
-  // **CORREÇÃO:** Adicionada lógica para usar uma porta padrão se a do .env falhar.
+  final String broker = dotenv.env['ADAFRUIT_IO_URL'] ?? 'io.adafruit.com';
   final String portString = dotenv.env['ADAFRUIT_IO_PORT'] ?? '8883';
-  final int port = int.tryParse(portString) ?? 8883; // Usa 8883 se a conversão falhar.
+  final int port = int.tryParse(portString) ?? 8883;
 
   final String user = dotenv.env['ADAFRUIT_IO_USERNAME'] ?? '';
   final String key = dotenv.env['ADAFRUIT_IO_KEY'] ?? '';
   
-  // Gera um ID de cliente único para tarefas de background para evitar conflitos
   final String clientId = isBackground 
     ? 'volt_age_background_${DateTime.now().millisecondsSinceEpoch}' 
     : 'volt_age_app_mobile';
 
+  // --- ADICIONADO PARA DEBUG ---
+  print('--- Tentando conectar ao MQTT ---');
+  print('Broker: $broker');
+  print('Porta: $port');
+  print('Usuário: $user');
+  print('Chave AIO: ${key.isNotEmpty ? "${key.substring(0, 4)}..." : "NÃO ENCONTRADA"}');
+  print('ID do Cliente: $clientId');
+  print('---------------------------------');
+  // --- FIM DO CÓDIGO DE DEBUG ---
+
   MqttServerClient client = MqttServerClient.withPort(broker, clientId, port);
+  
+  // **CORREÇÃO:** Força o uso de uma conexão segura (TLS), que é necessária para a porta 8883.
+  client.secure = true;
+  client.securityContext = SecurityContext.defaultContext;
   client.logging(on: false);
   client.setProtocolV311();
   client.keepAlivePeriod = 60;
