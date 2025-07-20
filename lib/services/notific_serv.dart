@@ -1,132 +1,66 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:volt_age_app/mqtt_services/mqtt.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:mqtt_client/mqtt_client.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-class NotificacaoService {
-  static final _plugin = FlutterLocalNotificationsPlugin();
-  static const _ignorePeriodKey = 'ignore_notifications_until';
-  
-  // Tópicos MQTT
-  static String get _baseTopico => "${dotenv.env["ADAFRUIT_IO_USERNAME"]}/feeds/cozinha";
-  static String get topicoGasAlerta => "$_baseTopico.gas-alerta";
-  static String get topicoValvulaEstado => "$_baseTopico.valvula-gas-estado";
-  static String get topicoValvulaControle => "$_baseTopico.valvula-gas-controle";
-  static String get topicoFogoTimerReset => "$_baseTopico.fogo-timer-reset";
-  static String get topicoFogoTimerApp => "$_baseTopico.fogo-timer-app";
+class NotificationService {
+  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
-  // Comandos MQTT
-  static const String cmdFecharValvula = "FECHAR_AGORA";
-  static const String cmdResetTimer = "RESET_TIMER";
-  static const String cmdAtivarTimer = "ATIVAR_TIMER";
-  
-  // Configurações de tempo para notificações
-  static const Duration tempoLembreteGas = Duration(minutes: 30);
-  static const Duration tempoIgnorarPadrao = Duration(hours: 1);
-  
-  // Níveis de prioridade
-  static const int prioridadeBaixa = 0;
-  static const int prioridadeMedia = 1;
-  static const int prioridadeAlta = 2;
-
-  static Future<void> inicializar() async {
-    const AndroidInitializationSettings androidSettings =
+  // O método de inicialização agora recebe a função que vai lidar com os cliques
+  static Future<void> initialize({
+    required Function(NotificationResponse) onSelectNotification,
+  }) async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
         AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings settings =
-        InitializationSettings(android: androidSettings);
 
-    await _plugin.initialize(
-      settings,
-      onDidReceiveNotificationResponse: (response) async {
-        print('Ação da notificação: ${response.actionId}');
-        switch (response.actionId) {
-          case 'fechar-valvula':
-            await _enviarComandoMQTT(cmdFecharValvula);
-            break;
-          case 'ativar-timer':
-            await _enviarComandoMQTT(cmdAtivarTimer);
-            break;
-          case 'ignorar':
-            await _ignorarNotificacoes(tempoIgnorarPadrao);
-            break;
-        }
-      },
+    final InitializationSettings initializationSettings =
+        InitializationSettings(android: initializationSettingsAndroid);
+
+    await _notificationsPlugin.initialize(
+      initializationSettings,
+      // Define a mesma função para quando o app está aberto ou em background
+      onDidReceiveNotificationResponse: onSelectNotification,
+      onDidReceiveBackgroundNotificationResponse: onSelectNotification,
     );
   }
 
-  static Future<void> enviarNotificacaoGasAberto() async {
-    // Verifica se as notificações estão sendo ignoradas
-    if (await _deveIgnorarNotificacao()) {
-      return;
-    }
+  // O método para mostrar a notificação agora tem um parâmetro 'isEmergency'
+  static Future<void> showNotification({
+    required String title,
+    required String body,
+    String payload = '',
+    bool isEmergency = false, // Decide se o botão de ação deve ser adicionado
+  }) async {
+    
+    // Lista de ações (botões) para a notificação
+    final List<AndroidNotificationAction> actions = isEmergency
+        ? [
+            const AndroidNotificationAction(
+              'FECHAR_GAS_ACTION', // ID único da ação
+              'FECHAR GÁS',       // Texto que aparece no botão
+              cancelNotification: true, // Fecha a notificação após o clique
+            )
+          ]
+        : [];
 
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'gas_alerta_channel',
-      'Alertas de Gás',
+    final AndroidNotificationDetails androidNotificationDetails =
+        AndroidNotificationDetails(
+      'volt_age_channel_critical', // ID do Canal
+      'Alertas Críticos Volt-Age', // Nome do Canal
+      channelDescription: 'Canal para notificações de emergência com ações.',
       importance: Importance.max,
       priority: Priority.high,
-      color: Color(0xFFe53935),
-      icon: '@mipmap/ic_launcher',
-      actions: <AndroidNotificationAction>[
-        AndroidNotificationAction(
-          'fechar-valvula',
-          'Fechar Válvula',
-        ),
-        AndroidNotificationAction(
-          'ativar-timer',
-          'Ativar Timer',
-        ),
-        AndroidNotificationAction(
-          'ignorar',
-          'Ignorar por 1h',
-        ),
-      ],
+      actions: actions, // Adiciona a lista de ações aqui
+      playSound: true,
     );
 
-    const NotificationDetails details = NotificationDetails(android: androidDetails);
+    final NotificationDetails notificationDetails =
+        NotificationDetails(android: androidNotificationDetails);
 
-    await _plugin.show(
-      0,
-      'Alerta de Gás',
-      'Atenção! o gás está aberto!',
-      details,
+    await _notificationsPlugin.show(
+      DateTime.now().millisecond, // ID único para a notificação
+      title,
+      body,
+      notificationDetails,
+      payload: payload,
     );
-  }
-
-  static Future<void> _enviarComandoMQTT(String comando) async {
-    final client = await connect();
-    String topic;
-    
-    switch (comando) {
-      case cmdFecharValvula:
-        topic = topicoValvulaControle;
-        break;
-      case cmdResetTimer:
-        topic = topicoFogoTimerReset;
-        break;
-      case cmdAtivarTimer:
-        topic = topicoFogoTimerApp;
-        break;
-      default:
-        throw Exception('Comando MQTT inválido: $comando');
-    }
-    
-    final builder = MqttClientPayloadBuilder();
-    builder.addString(comando);
-    client.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
-  }
-
-  static Future<void> _ignorarNotificacoes(Duration duracao) async {
-    final prefs = await SharedPreferences.getInstance();
-    final ignorarAte = DateTime.now().add(duracao).millisecondsSinceEpoch;
-    await prefs.setInt(_ignorePeriodKey, ignorarAte);
-  }
-
-  static Future<bool> _deveIgnorarNotificacao() async {
-    final prefs = await SharedPreferences.getInstance();
-    final ignorarAte = prefs.getInt(_ignorePeriodKey) ?? 0;
-    return DateTime.now().millisecondsSinceEpoch < ignorarAte;
   }
 }

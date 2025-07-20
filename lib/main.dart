@@ -1,53 +1,81 @@
 import 'package:flutter/material.dart';
-import 'package:volt_age_app/tela_inicial.dart'; // Certifique-se de que o nome do pacote está correto em 'pubspec.yaml'
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:mqtt_client/mqtt_client.dart';
+import 'package:volt_age_app/mqtt_services/mqtt.dart';
+import 'package:volt_age_app/services/notific_serv.dart';
+import 'package:volt_age_app/tela_inicial.dart';
+// Importação adicionada para corrigir o erro
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await NotificacaoService.inicializar();
-
-  // Solicita permissão para notificações (Android 13+)
-  final plugin = FlutterLocalNotificationsPlugin();
-  // Para Android, permissões de notificação são geralmente solicitadas automaticamente.
-  // Para iOS, você pode solicitar permissão assim:
-  await plugin.resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()?.requestPermissions(
-    alert: true,
-    badge: true,
-    sound: true,
-  );
-
-  runApp(const MeuApp());
+// Esta função precisa ficar fora de qualquer classe (top-level)
+// para que o sistema possa chamá-la quando o app estiver em segundo plano.
+@pragma('vm:entry-point')
+void notificationTapBackground(NotificationResponse notificationResponse) {
+  print('Ação de notificação recebida em background: ${notificationResponse.actionId}');
+  
+  // Verifica se o botão com o ID 'FECHAR_GAS_ACTION' foi pressionado
+  if (notificationResponse.actionId == 'FECHAR_GAS_ACTION') {
+    print('Comando para fechar o gás acionado pela notificação.');
+    // Tenta publicar o comando para fechar o gás
+    _publicarComandoBackground('valvula-gas-controle', 'FECHAR_AGORA');
+  }
 }
 
-class MeuApp extends StatelessWidget {
-  const MeuApp({super.key});
+/// Função auxiliar para se conectar e publicar um comando MQTT em segundo plano.
+Future<void> _publicarComandoBackground(String feed, String comando) async {
+  try {
+    // Carrega as variáveis de ambiente para obter as credenciais
+    await dotenv.load(fileName: ".env");
+    
+    // Conecta ao broker com um ID de cliente único para evitar conflitos
+    final client = await connect(isBackground: true); 
+    
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    if (usuario == null) {
+      print("Erro: Usuário não encontrado no .env em background.");
+      return;
+    }
+
+    final comandoTopic = "$usuario/feeds/$feed";
+    final builder = MqttClientPayloadBuilder();
+    builder.addString(comando);
+    
+    print('Publicando comando em background no tópico: $comandoTopic');
+    client.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
+    
+    // Aguarda um instante para garantir o envio antes de desconectar
+    await Future.delayed(const Duration(seconds: 2));
+    client.disconnect();
+    print("Cliente MQTT de background desconectado com sucesso.");
+
+  } catch (e) {
+    print('ERRO ao publicar comando em background: $e');
+  }
+}
+
+void main() async {
+  // Garante que todos os plugins do Flutter sejam inicializados antes do app rodar
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Inicializa o serviço de notificação, passando a função de background
+  await NotificationService.initialize(onSelectNotification: notificationTapBackground);
+
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'VoltApp',
-      // Define o tema geral do aplicativo. Você pode personalizar as cores aqui.
+      debugShowCheckedModeBanner: false,
+      title: 'Volt-Age App',
       theme: ThemeData(
-        // O `colorScheme` é a forma moderna de definir cores.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
-        // Estilo global para a AppBar
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.deepPurple,
-          foregroundColor: Colors.white,
-          elevation: 4,
-        ),
       ),
-      // Esconde o banner de "Debug" no canto superior direito.
-      debugShowCheckedModeBanner: false,
-      // A primeira tela a ser exibida é a TelaInicial (splash screen).
       home: const TelaInicial(),
     );
-  }
-}
-
-class NotificacaoService {
-  static Future<void> inicializar() async {
-    // Inicialização do serviço de notificações
   }
 }
