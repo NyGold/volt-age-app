@@ -3,10 +3,10 @@
 #include <AdafruitIO_WiFi.h>
 #include <FastLED.h>
 #include <Wire.h>
-#include <BH1750.h> // Biblioteca "claws/BH1750"
+#include <BH1750.h>
 
 // --- Inclui o arquivo de segredos ---
-#include "secrets.h" // Deve conter WIFI_SSID, WIFI_PASS, IO_USERNAME, IO_KEY
+#include "secrets.h" 
 
 // --- Instância do Adafruit IO ---
 AdafruitIO_WiFi io(IO_USERNAME, IO_KEY, WIFI_SSID, WIFI_PASS);
@@ -16,22 +16,22 @@ AdafruitIO_Feed *iluminacaoComandoSub = io.feed("iluminacao-comando");
 AdafruitIO_Feed *iluminacaoStatusFeed = io.feed("iluminacao-status");
 
 // --- Pinos e Configurações ---
-const int PINO_PIR      = 15; // Pino para o sensor de presença
-const int PINO_FITA_LED = 2;  // Pino de dados da fita de LED WS2812B
-const int NUM_LEDS      = 30; // Número de LEDs na sua fita
-const int BRIGHTNESS    = 150;// Brilho da fita (0-255)
+const int PINO_PIR      = 15; 
+const int PINO_FITA_LED = 2;  
+const int NUM_LEDS      = 30; 
+const int BRIGHTNESS    = 150;
 
 // --- Constantes de Lógica ---
-const long TEMPO_LUZ_ACESA_APOS_MOVIMENTO = 30000; // 30 segundos em milissegundos
-const float LIMIAR_ESCURO_LUX = 50.0;             // Abaixo deste valor em Lux, é considerado "escuro"
-const long PUBLISH_STATUS_RATE_LIMIT = 2000;      // Publica o status no máximo a cada 2 segundos
+const long TEMPO_LUZ_ACESA_APOS_MOVIMENTO = 30000; 
+const float LIMIAR_ESCURO_LUX = 50.0;             
+const long PUBLISH_STATUS_RATE_LIMIT = 2000;      
 
 // --- Variáveis de Estado ---
 enum IluminacaoMode { AUTOMATICO, MANUAL_LIGADO, MANUAL_DESLIGADO };
 IluminacaoMode currentMode = AUTOMATICO;
 
 CRGB leds[NUM_LEDS];
-uint32_t corAtual = CRGB::FloralWhite; // Cor padrão inicial
+uint32_t corAtual = CRGB::FloralWhite; 
 bool luzesEstaoAcesas = false;
 unsigned long ultimoMovimentoDetectado = 0;
 bool escuroDetectado = false;
@@ -55,12 +55,10 @@ void setup() {
   Serial.begin(115200);
   pinMode(PINO_PIR, INPUT);
 
-  // Inicializa a fita de LED
   FastLED.addLeds<WS2812B, PINO_FITA_LED, GRB>(leds, NUM_LEDS);
   FastLED.setBrightness(BRIGHTNESS);
-  desligarLuzes(); // Garante que começa desligada
+  desligarLuzes(); 
 
-  // Inicializa o sensor de luz BH1750
   Wire.begin();
   if (!lightSensor.begin(BH1750::CONTINUOUS_HIGH_RES_MODE)) {
     Serial.println(F("Erro ao encontrar o sensor BH1750! Verifique a fiação I2C."));
@@ -71,22 +69,25 @@ void setup() {
 
   iluminacaoComandoSub->onMessage(handleIluminacaoComando);
   
+  // *** CORREÇÃO APLICADA AQUI ***
+  // Este loop agora chama io.run() para processar a conexão.
   while (io.status() < AIO_CONNECTED) {
     Serial.print(".");
+    io.run(); // Permite que a biblioteca processe a conexão em segundo plano
     delay(500);
   }
+  
   Serial.println();
   Serial.println(io.statusText());
 
-  iluminacaoComandoSub->get(); // Busca o último comando ao iniciar
-  publishStatusOnChange(); // Publica o estado inicial
+  iluminacaoComandoSub->get(); 
+  publishStatusOnChange(); 
 }
 
 // --- Função loop() ---
 void loop() {
   io.run(); // Essencial para a comunicação e callbacks
 
-  // Leitura dos sensores
   bool movimento = digitalRead(PINO_PIR) == HIGH;
   float lux = lightSensor.readLightLevel();
   escuroDetectado = (lux < LIMIAR_ESCURO_LUX);
@@ -95,7 +96,6 @@ void loop() {
     ultimoMovimentoDetectado = millis();
   }
 
-  // --- Máquina de Estados da Iluminação ---
   switch (currentMode) {
     case AUTOMATICO:
       if ((millis() - ultimoMovimentoDetectado < TEMPO_LUZ_ACESA_APOS_MOVIMENTO) && escuroDetectado) {
@@ -153,19 +153,16 @@ void desligarLuzes() {
 }
 
 void parseHexColor(const char* hexstring) {
-  // Converte a string hexadecimal (ex: "#FF0000") para um número de 32 bits
   long number = strtol(&hexstring[1], NULL, 16);
   corAtual = number;
-  // Se as luzes já estiverem acesas no modo manual, atualiza a cor imediatamente
   if (luzesEstaoAcesas && currentMode == MANUAL_LIGADO) {
-    fill_solid(leds, NUM_LEDS, corAtual); // Re-aplica a cor
+    fill_solid(leds, NUM_LEDS, corAtual); 
     FastLED.show();
   }
 }
 
 void publishStatusOnChange() {
   unsigned long currentTime = millis();
-  // Publica o status da luz apenas se ele mudou E passou o tempo de rate limit
   if (luzesEstaoAcesas != ultimoStatusPublicado && currentTime - ultimoPublishTime > PUBLISH_STATUS_RATE_LIMIT) {
     if (luzesEstaoAcesas) {
       iluminacaoStatusFeed->save("ACESA");
