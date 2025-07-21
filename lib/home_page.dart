@@ -25,12 +25,15 @@ class _HomePageState extends State<HomePage> {
   // Streams para receber atualizações
   final StreamController<String> _gasAlertaController = StreamController<String>.broadcast();
   final StreamController<String> _valvulaEstadoController = StreamController<String>.broadcast();
+  final StreamController<String> _umidadeSoloController = StreamController<String>.broadcast();
+
 
   // boa prática de fechar os steams
   @override
   void dispose() {
     _gasAlertaController.close();
     _valvulaEstadoController.close();
+    _umidadeSoloController.close();
     super.dispose();
   }
 
@@ -67,6 +70,9 @@ class _HomePageState extends State<HomePage> {
       }
       if (topic.endsWith('/feeds/valvula-gas-estado')) {
         _valvulaEstadoController.add(pt); // Adiciona a mensagem ao stream do valvulaEstado
+      }
+      if (topic.endsWith('/feeds/jardim-umidade-solo')) {
+        _umidadeSoloController.add(pt); // Adiciona a mensagem ao stream do umidadeSolo
       }
       // Adicione outros `if` para outros feeds que você queira ouvir.
     });
@@ -145,9 +151,14 @@ class _HomePageState extends State<HomePage> {
               mqttClient: mqttClient,
               gasAlertaStream: _gasAlertaController.stream,
               valvulaEstadoStream: _valvulaEstadoController.stream
-            ),
-          Tela2(mqttClient: mqttClient),
-          Tela3(mqttClient: mqttClient),
+          ),
+          Tela2(
+            mqttClient: mqttClient,
+            umidadeSoloStream: _umidadeSoloController.stream,
+          ),
+          Tela3(
+            mqttClient: mqttClient  
+          ),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

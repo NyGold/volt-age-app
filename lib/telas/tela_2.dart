@@ -9,6 +9,8 @@
 * qualquer coisa é só ver o gemini ou ver tela_1 que já está quase tudo certo.
 */
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
@@ -16,7 +18,13 @@ import 'package:syncfusion_flutter_gauges/gauges.dart';
 class Tela2 extends StatefulWidget {
   final MqttClient? mqttClient;
 
-  const Tela2({super.key, this.mqttClient});
+  final Stream<String>? umidadeSoloStream;
+
+  const Tela2({
+    super.key, 
+    this.mqttClient,
+    this.umidadeSoloStream
+  });
 
   @override
   State<Tela2> createState() => _Tela2State();
@@ -28,6 +36,9 @@ class _Tela2State extends State<Tela2> {
   double limiarUmidade = 35.0; // Valor inicial padrão
   String statusRega = "Carregando...";
 
+  // stream para receber atualizações
+  StreamSubscription? _umidadeSoloSubscription;
+
   // Feeds da Jardinagem
   final feedUmidadeSolo = "jardim-umidade-solo";
   final feedStatusRega = "jardim-status-rega";
@@ -36,17 +47,33 @@ class _Tela2State extends State<Tela2> {
   @override
   void initState() {
     super.initState();
+
+    _umidadeSoloSubscription = widget.umidadeSoloStream?.listen((novaMensagem) {
+      print("Modulo Jardinagem: umidade atualizada: $novaMensagem");
+      setState(() {
+        umidadeSolo = double.tryParse(novaMensagem) ?? 0.0; // Atualiza o estado
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _umidadeSoloSubscription?.cancel();
+    super.dispose();
   }
 
   void _publicarLimiar(double valor) {
-    if (mqttClient?.connectionStatus?.state != MqttConnectionState.connected) {
+    if (widget.mqttClient?.connectionStatus?.state != MqttConnectionState.connected) {
       return;
     }
     final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
     final comandoTopic = "$usuario/feeds/$feedLimiarUmidade";
     final builder = MqttClientPayloadBuilder();
     builder.addString(valor.round().toString());
-    mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
+
+    print('Publicando novo limiar de umidade: $valor% no tópico: $comandoTopic');
+
+    widget.mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
   }
 
   @override

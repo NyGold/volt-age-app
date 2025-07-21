@@ -20,7 +20,6 @@ class Tela1 extends StatefulWidget {
   State<Tela1> createState() => _Tela1State();
 }
 
-
 class _Tela1State extends State<Tela1> {
   MqttClient? mqttClient;
   String gasAlerta = "Carregando...";
@@ -43,27 +42,26 @@ class _Tela1State extends State<Tela1> {
     super.initState();
 
       _gasAlertaSubscription = widget.gasAlertaStream?.listen((novaMensagem) {
-        print("TELA 1: Novo status de gás recebido: $novaMensagem");
+        print("Modulo Cozinha: Novo status de gás recebido: $novaMensagem");
         setState(() {
           gasAlerta = novaMensagem; // ATUALIZA O ESTADO!
         });
       });
 
       _valvulaEstadoSubscription = widget.valvulaEstadoStream?.listen((novoEstado) {
-        print("TELA 1: Novo estado da válvula recebido: $novoEstado");
+        print("Modulo Cozinha: Novo estado da válvula recebido: $novoEstado");
         setState(() {
           valvulaEstado = novoEstado; // ATUALIZA O ESTADO!
         });
       });
-    }
+    } 
 
   @override
   void dispose() {
     _gasAlertaSubscription?.cancel();
     _valvulaEstadoSubscription?.cancel();
     super.dispose(); 
-  } 
-
+  }
 
   void _publicarComando(String feed, String comando) {
     // Use "widget.mqttClient" para acessar a conexão passada pela HomePage
