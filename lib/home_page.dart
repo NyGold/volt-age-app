@@ -1,3 +1,5 @@
+// ARQUIVO: lib/home_page.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
@@ -34,6 +36,7 @@ class _HomePageState extends State<HomePage> {
     _gasAlertaController.close();
     _valvulaEstadoController.close();
     _umidadeSoloController.close();
+    mqttClient?.disconnect();
     super.dispose();
   }
 
@@ -50,79 +53,86 @@ class _HomePageState extends State<HomePage> {
         setState(() {
           mqttClient = client;
         });
-        _configurarListenerDeNotificacoes();
+
+        // --- Adicionar Logs de Diagnóstico ---
+        final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+        if (usuario == null || usuario.isEmpty) {
+          print("ERRO CRÍTICO: ADAFRUIT_IO_USERNAME não encontrado no arquivo .env!");
+          return;
+        }
+
+        print("--- INICIANDO INSCRIÇÃO NOS TÓPICOS ---");
+        print("Usuário detectado: $usuario");
+
+        final feedGasAlerta = "$usuario/feeds/gas-alerta";
+        final feedValvulaEstado = "$usuario/feeds/valvula-gas-estado";
+        final feedUmidadeSolo = "$usuario/feeds/jardim-umidade-solo";
+        final feedStatusRega = "$usuario/feeds/jardim-status-rega";
+
+        print("Inscrevendo-se em: $feedGasAlerta");
+        mqttClient?.subscribe(feedGasAlerta, MqttQos.atLeastOnce);
+
+        print("Inscrevendo-se em: $feedValvulaEstado");
+        mqttClient?.subscribe(feedValvulaEstado, MqttQos.atLeastOnce);
+
+        print("Inscrevendo-se em: $feedUmidadeSolo");
+        mqttClient?.subscribe(feedUmidadeSolo, MqttQos.atLeastOnce);
+
+        print("Inscrevendo-se em: $feedStatusRega");
+        mqttClient?.subscribe(feedStatusRega, MqttQos.atLeastOnce);
+
+        print("--- INSCRIÇÕES CONCLUÍDAS ---");
       }
     } catch (e) {
-      print('Erro na conexão MQTT Global: $e');
+      print('ERRO NA CONEXÃO MQTT GLOBAL: $e');
     }
 
-    mqttClient!.updates!.listen((List<MqttReceivedMessage<MqttMessage?>>? c) {
+    // Listener de mensagens (sem alterações aqui, mas verifique o terminal)
+    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage?>>? c) {
       final recMess = c![0].payload as MqttPublishMessage;
       final pt = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
       final topic = c[0].topic;
 
-      print('MQTT_LOGS:: Mensagem recebida: Tópico: <$topic>, Payload: <-- $pt -->');
-      print('');
+      // Este print é crucial. Ele mostra TUDO que o app recebe.
+      print('MQTT_RECEBIDO:: Tópico: <$topic>, Payload: <-- $pt -->');
 
-      // Direciona a mensagem para o "cano" (Stream) correto
       if (topic.endsWith('/feeds/gas-alerta')) {
-        _gasAlertaController.add(pt); // Adiciona a mensagem ao stream do gasAlerta
+        _gasAlertaController.add(pt);
+      } else if (topic.endsWith('/feeds/valvula-gas-estado')) {
+        _valvulaEstadoController.add(pt);
+      } else if (topic.endsWith('/feeds/jardim-umidade-solo')) {
+        _umidadeSoloController.add(pt);
       }
-      if (topic.endsWith('/feeds/valvula-gas-estado')) {
-        _valvulaEstadoController.add(pt); // Adiciona a mensagem ao stream do valvulaEstado
-      }
-      if (topic.endsWith('/feeds/jardim-umidade-solo')) {
-        _umidadeSoloController.add(pt); // Adiciona a mensagem ao stream do umidadeSolo
-      }
-      // Adicione outros `if` para outros feeds que você queira ouvir.
-    });
 
-  }
-
-  void _configurarListenerDeNotificacoes() {
-    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-    if (usuario == null) return;
-
-    final feedGasAlerta = "$usuario/feeds/gas-alerta";
-    final feedStatusRega = "$usuario/feeds/jardim-status-rega";
-
-    mqttClient?.subscribe(feedGasAlerta, MqttQos.atLeastOnce);
-    mqttClient?.subscribe(feedStatusRega, MqttQos.atLeastOnce);
-
-    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage>> c) {
-      final recMess = c[0].payload as MqttPublishMessage;
-      final payload = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-      final topic = c[0].topic;
-
-      print("Mensagem global recebida no tópico $topic: $payload");
-
-      if (topic == feedGasAlerta) {
-        if (payload == "ALARME_GAS") {
+      // Lógica de notificação permanece aqui
+      if (topic.endsWith('/feeds/gas-alerta')) {
+         if (pt == "ALARME_GAS") {
           NotificationService.showNotification(
             title: '🚨 ALERTA DE GÁS! 🚨',
             body: 'Vazamento de gás detectado. Aja agora!',
-            isEmergency: true, // <-- INFORMA QUE PRECISA DO BOTÃO
+            isEmergency: true,
             payload: 'gas_alert',
           );
-        } else if (payload == "FOGO_SEM_PRESENCA") {
+        } else if (pt == "FOGO_SEM_PRESENCA") {
           NotificationService.showNotification(
             title: '🔥 ALERTA DE FOGO! 🔥',
             body: 'O fogão pode ter sido esquecido aceso. Aja agora!',
-            isEmergency: true, // <-- INFORMA QUE PRECISA DO BOTÃO
+            isEmergency: true,
             payload: 'fire_alert',
           );
         }
-      } else if (topic == feedStatusRega) {
-        if (payload == "REGAR_AGORA") {
+      } else if (topic.endsWith('/feeds/jardim-status-rega')) {
+         if (pt == "REGAR_AGORA") {
           NotificationService.showNotification(
             title: '💧 Hora de Regar a Planta 💧',
             body: 'A umidade do solo está baixa. Sua planta precisa de água.',
-            isEmergency: false, // Notificação normal
+            isEmergency: false,
           );
         }
       }
     });
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -157,7 +167,7 @@ class _HomePageState extends State<HomePage> {
             umidadeSoloStream: _umidadeSoloController.stream,
           ),
           Tela3(
-            mqttClient: mqttClient  
+            mqttClient: mqttClient
           ),
         ],
       ),
