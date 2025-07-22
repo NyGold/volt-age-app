@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'dart:async';
+import 'package:http/http.dart' as http;
 
 class Tela1 extends StatefulWidget {
   final MqttClient? mqttClient;
@@ -41,20 +42,56 @@ class _Tela1State extends State<Tela1> {
   void initState() {
     super.initState();
 
-      _gasAlertaSubscription = widget.gasAlertaStream?.listen((novaMensagem) {
-        print("Modulo Cozinha: Novo status de gás recebido: $novaMensagem");
-        setState(() {
-          gasAlerta = novaMensagem; // ATUALIZA O ESTADO!
-        });
+    // Busca valor inicial dos feeds
+    buscarValorFeed(feedGasAlerta, (valor) {
+      setState(() {
+        gasAlerta = valor;
       });
+    });
+    buscarValorFeed(feedValvulaEstado, (valor) {
+      setState(() {
+        valvulaEstado = valor;
+      });
+    });
 
-      _valvulaEstadoSubscription = widget.valvulaEstadoStream?.listen((novoEstado) {
-        print("Modulo Cozinha: Novo estado da válvula recebido: $novoEstado");
-        setState(() {
-          valvulaEstado = novoEstado; // ATUALIZA O ESTADO!
-        });
+    // Listeners das streams
+    _gasAlertaSubscription = widget.gasAlertaStream?.listen((novaMensagem) {
+      print('[DEBUG][TELA1] Stream gasAlerta recebeu: $novaMensagem');
+      setState(() {
+        gasAlerta = novaMensagem;
       });
-    } 
+      print('[DEBUG][TELA1] Estado gasAlerta atualizado: $gasAlerta');
+    });
+
+    _valvulaEstadoSubscription = widget.valvulaEstadoStream?.listen((novoEstado) {
+      print('[DEBUG][TELA1] Stream valvulaEstado recebeu: $novoEstado');
+      setState(() {
+        valvulaEstado = novoEstado;
+      });
+      print('[DEBUG][TELA1] Estado valvulaEstado atualizado: $valvulaEstado');
+    });
+  }
+
+    // Busca valor inicial do feed via REST API Adafruit IO
+  Future<void> buscarValorFeed(String feed, Function(String) onValor) async {
+    await dotenv.load();
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    final key = dotenv.env["ADAFRUIT_IO_KEY"];
+    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
+    try {
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'X-AIO-Key': key ?? ''},
+      );
+      if (response.statusCode == 200) {
+        final data = response.body;
+        final valor = RegExp('"value":"(.*?)"').firstMatch(data)?.group(1) ?? data;
+        onValor(valor);
+      }
+    } catch (e) {
+      print('Erro ao buscar valor inicial do feed $feed: $e');
+    }
+  }
 
   @override
   void dispose() {

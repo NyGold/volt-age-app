@@ -28,6 +28,9 @@ class _HomePageState extends State<HomePage> {
   final StreamController<String> _gasAlertaController = StreamController<String>.broadcast();
   final StreamController<String> _valvulaEstadoController = StreamController<String>.broadcast();
   final StreamController<String> _umidadeSoloController = StreamController<String>.broadcast();
+  final StreamController<String> _statusRegaController = StreamController<String>.broadcast();
+  final StreamController<String> _luzStatusController = StreamController<String>.broadcast();
+  final StreamController<String> _limiarUmidadeController = StreamController<String>.broadcast();
 
 
   // boa prática de fechar os steams
@@ -36,6 +39,9 @@ class _HomePageState extends State<HomePage> {
     _gasAlertaController.close();
     _valvulaEstadoController.close();
     _umidadeSoloController.close();
+    _statusRegaController.close();
+    _luzStatusController.close();
+    _limiarUmidadeController.close();
     mqttClient?.disconnect();
     super.dispose();
   }
@@ -68,6 +74,8 @@ class _HomePageState extends State<HomePage> {
         final feedValvulaEstado = "$usuario/feeds/valvula-gas-estado";
         final feedUmidadeSolo = "$usuario/feeds/jardim-umidade-solo";
         final feedStatusRega = "$usuario/feeds/jardim-status-rega";
+        final feedLuzStatus = "$usuario/feeds/iluminacao-status";
+        final feedLimiarUmidade = "$usuario/feeds/jardim-limiar-umidade";
 
         print("Inscrevendo-se em: $feedGasAlerta");
         mqttClient?.subscribe(feedGasAlerta, MqttQos.atLeastOnce);
@@ -81,6 +89,12 @@ class _HomePageState extends State<HomePage> {
         print("Inscrevendo-se em: $feedStatusRega");
         mqttClient?.subscribe(feedStatusRega, MqttQos.atLeastOnce);
 
+        print("Inscrevendo-se em: $feedLuzStatus");
+        mqttClient?.subscribe(feedLuzStatus, MqttQos.atLeastOnce);
+
+        print("Inscrevendo-se em: $feedLimiarUmidade");
+        mqttClient?.subscribe(feedLimiarUmidade, MqttQos.atLeastOnce);
+
         print("--- INSCRIÇÕES CONCLUÍDAS ---");
       }
     } catch (e) {
@@ -93,15 +107,23 @@ class _HomePageState extends State<HomePage> {
       final pt = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
       final topic = c[0].topic;
 
-      // Este print é crucial. Ele mostra TUDO que o app recebe.
-      print('MQTT_RECEBIDO:: Tópico: <$topic>, Payload: <-- $pt -->');
+      print('[DEBUG][HOME] MQTT_RECEBIDO:: Tópico: <$topic>, Payload: <-- $pt -->');
 
       if (topic.endsWith('/feeds/gas-alerta')) {
+        print('[DEBUG][HOME] Adicionando ao _gasAlertaController: $pt');
         _gasAlertaController.add(pt);
       } else if (topic.endsWith('/feeds/valvula-gas-estado')) {
+        print('[DEBUG][HOME] Adicionando ao _valvulaEstadoController: $pt');
         _valvulaEstadoController.add(pt);
       } else if (topic.endsWith('/feeds/jardim-umidade-solo')) {
+        print('[DEBUG][HOME] Adicionando ao _umidadeSoloController: $pt');
         _umidadeSoloController.add(pt);
+      } else if (topic.endsWith('/feeds/jardim-status-rega')) {
+        print('[DEBUG][HOME] Adicionando ao _statusRegaController: $pt');
+        _statusRegaController.add(pt);
+      } else if (topic.endsWith('/feeds/jardim-limiar-umidade')) {
+        print('[DEBUG][HOME] Adicionando ao _limiarUmidadeController: $pt');
+        _limiarUmidadeController.add(pt);
       }
 
       // Lógica de notificação permanece aqui
@@ -165,6 +187,8 @@ class _HomePageState extends State<HomePage> {
           Tela2(
             mqttClient: mqttClient,
             umidadeSoloStream: _umidadeSoloController.stream,
+            statusRegaStream: _statusRegaController.stream,
+            limiarUmidadeStream: _limiarUmidadeController.stream,
           ),
           Tela3(
             mqttClient: mqttClient

@@ -1,29 +1,23 @@
-/* TODO: 
-* 1 criar os stream na home_page com os tópicos que ele vai ouvir
-* 2 passar os streams para as telas que vão ouvir
-* 3 criar os streams nas telas que vão ouvir
-* 4 criar os listeners para atualizar o estado das telas
-* 5 criar os métodos de publicar comandos para cada tela
-* 6 criar os métodos de publicar comandos em background para cada tela 
-
-* qualquer coisa é só ver o gemini ou ver tela_1 que já está quase tudo certo.
-*/
-
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
+import 'package:http/http.dart' as http;
+
 class Tela2 extends StatefulWidget {
   final MqttClient? mqttClient;
 
   final Stream<String>? umidadeSoloStream;
+  final Stream<String>? statusRegaStream;
+  final Stream<String>? limiarUmidadeStream;
 
   const Tela2({
-    super.key, 
+    super.key,
     this.mqttClient,
-    this.umidadeSoloStream
+    this.umidadeSoloStream,
+    this.statusRegaStream,
+    this.limiarUmidadeStream,
   });
 
   @override
@@ -31,13 +25,14 @@ class Tela2 extends StatefulWidget {
 }
 
 class _Tela2State extends State<Tela2> {
-  MqttClient? mqttClient;
   double umidadeSolo = 0.0;
   double limiarUmidade = 35.0; // Valor inicial padrão
   String statusRega = "Carregando...";
 
   // stream para receber atualizações
   StreamSubscription? _umidadeSoloSubscription;
+  StreamSubscription? _statusRegaSubscription;
+  StreamSubscription? _limiarUmidadeSubscription;
 
   // Feeds da Jardinagem
   final feedUmidadeSolo = "jardim-umidade-solo";
@@ -48,18 +43,56 @@ class _Tela2State extends State<Tela2> {
   void initState() {
     super.initState();
 
-    _umidadeSoloSubscription = widget.umidadeSoloStream?.listen((novaMensagem) {
-      print("Modulo Jardinagem: umidade atualizada: $novaMensagem");
+    buscarValorFeed(feedUmidadeSolo, (valor) {
       setState(() {
-        umidadeSolo = double.tryParse(novaMensagem) ?? 0.0; // Atualiza o estado
+        umidadeSolo = double.tryParse(valor) ?? 0.0;
       });
+      print('[DEBUG] Valor inicial umidadeSolo: $valor | Estado: $umidadeSolo');
     });
-  }
 
-  @override
-  void dispose() {
-    _umidadeSoloSubscription?.cancel();
-    super.dispose();
+    buscarValorFeed(feedStatusRega, (valor) {
+      setState(() {
+        statusRega = valor;
+      });
+      print('[DEBUG] Valor inicial statusRega: $valor | Estado: $statusRega');
+    });
+
+    buscarValorFeed(feedLimiarUmidade, (valor) {
+      setState(() {
+        limiarUmidade = double.tryParse(valor) ?? limiarUmidade;
+      });
+      print('[DEBUG] Valor inicial limiarUmidade: $valor | Estado: $limiarUmidade');
+    });
+
+    _umidadeSoloSubscription = widget.umidadeSoloStream?.listen((novaMensagem) {
+      print('[DEBUG][TELA2] Stream umidadeSolo recebeu: $novaMensagem');
+      if (mounted) {
+        setState(() {
+          umidadeSolo = double.tryParse(novaMensagem) ?? 0.0;
+        });
+        print('[DEBUG][TELA2] Estado umidadeSolo atualizado: $umidadeSolo');
+      }
+    });
+
+    _statusRegaSubscription = widget.statusRegaStream?.listen((novoStatus) {
+      print('[DEBUG][TELA2] Stream statusRega recebeu: $novoStatus');
+      if (mounted) {
+        setState(() {
+          statusRega = novoStatus;
+        });
+        print('[DEBUG][TELA2] Estado statusRega atualizado: $statusRega');
+      }
+    });
+
+    _limiarUmidadeSubscription = widget.limiarUmidadeStream?.listen((novoLimiar) {
+      print('[DEBUG][TELA2] Stream limiarUmidade recebeu: $novoLimiar');
+      if (mounted) {
+        setState(() {
+          limiarUmidade = double.tryParse(novoLimiar) ?? limiarUmidade;
+        });
+        print('[DEBUG][TELA2] Estado limiarUmidade atualizado: $limiarUmidade');
+      }
+    });
   }
 
   void _publicarLimiar(double valor) {
@@ -70,10 +103,44 @@ class _Tela2State extends State<Tela2> {
     final comandoTopic = "$usuario/feeds/$feedLimiarUmidade";
     final builder = MqttClientPayloadBuilder();
     builder.addString(valor.round().toString());
-
     print('Publicando novo limiar de umidade: $valor% no tópico: $comandoTopic');
-
     widget.mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
+  }
+
+  Future<void> buscarValorFeed(String feed, Function(String) onValor) async {
+    await dotenv.load();
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    final key = dotenv.env["ADAFRUIT_IO_KEY"];
+    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
+    print('[DEBUG] Buscando valor inicial do feed: $feed');
+    print('[DEBUG] URL: $url');
+    try {
+      final response = await http.get(
+        Uri.parse(url),
+        headers: {'X-AIO-Key': key ?? ''},
+      );
+      print('[DEBUG] Status code: ${response.statusCode}');
+      print('[DEBUG] Body recebido: ${response.body}');
+      if (response.statusCode == 200) {
+        final data = response.body;
+        final match = RegExp('"value":"(.*?)"').firstMatch(data);
+        final valor = match?.group(1) ?? data;
+        print('[DEBUG] Valor extraído: $valor');
+        onValor(valor);
+      } else {
+        print('[DEBUG] Falha ao buscar feed $feed: status ${response.statusCode}');
+      }
+    } catch (e) {
+      print('[DEBUG] Erro ao buscar valor inicial do feed $feed: $e');
+    }
+  }
+
+  @override
+  void dispose() {
+    _umidadeSoloSubscription?.cancel();
+    _statusRegaSubscription?.cancel();
+    _limiarUmidadeSubscription?.cancel();
+    super.dispose();
   }
 
   @override
