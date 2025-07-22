@@ -1,13 +1,6 @@
 // ARQUIVO: lib/home_page.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:mqtt_client/mqtt_client.dart';
-import 'package:volt_age_app/mqtt_services/mqtt.dart';
-import 'package:volt_age_app/services/notific_serv.dart';
-
-import 'dart:async';
-
 import 'package:volt_age_app/telas/tela_1.dart';
 import 'package:volt_age_app/telas/tela_2.dart';
 import 'package:volt_age_app/telas/tela_3.dart';
@@ -22,142 +15,17 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _paginaAtual = 0;
   final PageController _pageController = PageController();
-  MqttClient? mqttClient;
 
-  // Streams para receber atualizações
-  final StreamController<String> _gasAlertaController = StreamController<String>.broadcast();
-  final StreamController<String> _valvulaEstadoController = StreamController<String>.broadcast();
-  final StreamController<String> _umidadeSoloController = StreamController<String>.broadcast();
-  final StreamController<String> _statusRegaController = StreamController<String>.broadcast();
-  final StreamController<String> _luzStatusController = StreamController<String>.broadcast();
-  final StreamController<String> _limiarUmidadeController = StreamController<String>.broadcast();
-
-
-  // boa prática de fechar os steams
   @override
   void dispose() {
-    _gasAlertaController.close();
-    _valvulaEstadoController.close();
-    _umidadeSoloController.close();
-    _statusRegaController.close();
-    _luzStatusController.close();
-    _limiarUmidadeController.close();
-    mqttClient?.disconnect();
+    _pageController.dispose();
     super.dispose();
   }
 
   @override
-  void initState() {
-    super.initState();
-    _inicializarConexaoMqttGlobal();
-  }
-
-  Future<void> _inicializarConexaoMqttGlobal() async {
-    try {
-      final client = await connect();
-      if (mounted) {
-        setState(() {
-          mqttClient = client;
-        });
-
-        // --- Adicionar Logs de Diagnóstico ---
-        final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-        if (usuario == null || usuario.isEmpty) {
-          print("ERRO CRÍTICO: ADAFRUIT_IO_USERNAME não encontrado no arquivo .env!");
-          return;
-        }
-
-        print("--- INICIANDO INSCRIÇÃO NOS TÓPICOS ---");
-        print("Usuário detectado: $usuario");
-
-        final feedGasAlerta = "$usuario/feeds/gas-alerta";
-        final feedValvulaEstado = "$usuario/feeds/valvula-gas-estado";
-        final feedUmidadeSolo = "$usuario/feeds/jardim-umidade-solo";
-        final feedStatusRega = "$usuario/feeds/jardim-status-rega";
-        final feedLuzStatus = "$usuario/feeds/iluminacao-status";
-        final feedLimiarUmidade = "$usuario/feeds/jardim-limiar-umidade";
-
-        print("Inscrevendo-se em: $feedGasAlerta");
-        mqttClient?.subscribe(feedGasAlerta, MqttQos.atLeastOnce);
-
-        print("Inscrevendo-se em: $feedValvulaEstado");
-        mqttClient?.subscribe(feedValvulaEstado, MqttQos.atLeastOnce);
-
-        print("Inscrevendo-se em: $feedUmidadeSolo");
-        mqttClient?.subscribe(feedUmidadeSolo, MqttQos.atLeastOnce);
-
-        print("Inscrevendo-se em: $feedStatusRega");
-        mqttClient?.subscribe(feedStatusRega, MqttQos.atLeastOnce);
-
-        print("Inscrevendo-se em: $feedLuzStatus");
-        mqttClient?.subscribe(feedLuzStatus, MqttQos.atLeastOnce);
-
-        print("Inscrevendo-se em: $feedLimiarUmidade");
-        mqttClient?.subscribe(feedLimiarUmidade, MqttQos.atLeastOnce);
-
-        print("--- INSCRIÇÕES CONCLUÍDAS ---");
-      }
-    } catch (e) {
-      print('ERRO NA CONEXÃO MQTT GLOBAL: $e');
-    }
-
-    // Listener de mensagens (sem alterações aqui, mas verifique o terminal)
-    mqttClient?.updates?.listen((List<MqttReceivedMessage<MqttMessage?>>? c) {
-      final recMess = c![0].payload as MqttPublishMessage;
-      final pt = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
-      final topic = c[0].topic;
-
-      print('[DEBUG][HOME] MQTT_RECEBIDO:: Tópico: <$topic>, Payload: <-- $pt -->');
-
-      if (topic.endsWith('/feeds/gas-alerta')) {
-        print('[DEBUG][HOME] Adicionando ao _gasAlertaController: $pt');
-        _gasAlertaController.add(pt);
-      } else if (topic.endsWith('/feeds/valvula-gas-estado')) {
-        print('[DEBUG][HOME] Adicionando ao _valvulaEstadoController: $pt');
-        _valvulaEstadoController.add(pt);
-      } else if (topic.endsWith('/feeds/jardim-umidade-solo')) {
-        print('[DEBUG][HOME] Adicionando ao _umidadeSoloController: $pt');
-        _umidadeSoloController.add(pt);
-      } else if (topic.endsWith('/feeds/jardim-status-rega')) {
-        print('[DEBUG][HOME] Adicionando ao _statusRegaController: $pt');
-        _statusRegaController.add(pt);
-      } else if (topic.endsWith('/feeds/jardim-limiar-umidade')) {
-        print('[DEBUG][HOME] Adicionando ao _limiarUmidadeController: $pt');
-        _limiarUmidadeController.add(pt);
-      }
-
-      // Lógica de notificação permanece aqui
-      if (topic.endsWith('/feeds/gas-alerta')) {
-         if (pt == "ALARME_GAS") {
-          NotificationService.showNotification(
-            title: '🚨 ALERTA DE GÁS! 🚨',
-            body: 'Vazamento de gás detectado. Aja agora!',
-            isEmergency: true,
-            payload: 'gas_alert',
-          );
-        } else if (pt == "FOGO_SEM_PRESENCA") {
-          NotificationService.showNotification(
-            title: '🔥 ALERTA DE FOGO! 🔥',
-            body: 'O fogão pode ter sido esquecido aceso. Aja agora!',
-            isEmergency: true,
-            payload: 'fire_alert',
-          );
-        }
-      } else if (topic.endsWith('/feeds/jardim-status-rega')) {
-         if (pt == "REGAR_AGORA") {
-          NotificationService.showNotification(
-            title: '💧 Hora de Regar a Planta 💧',
-            body: 'A umidade do solo está baixa. Sua planta precisa de água.',
-            isEmergency: false,
-          );
-        }
-      }
-    });
-  }
-
-
-  @override
   Widget build(BuildContext context) {
+    // Não precisamos mais de `initState` ou lógica de MQTT aqui!
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -178,21 +46,11 @@ class _HomePageState extends State<HomePage> {
             _paginaAtual = index;
           });
         },
-        children: [
-          Tela1(
-              mqttClient: mqttClient,
-              gasAlertaStream: _gasAlertaController.stream,
-              valvulaEstadoStream: _valvulaEstadoController.stream
-          ),
-          Tela2(
-            mqttClient: mqttClient,
-            umidadeSoloStream: _umidadeSoloController.stream,
-            statusRegaStream: _statusRegaController.stream,
-            limiarUmidadeStream: _limiarUmidadeController.stream,
-          ),
-          Tela3(
-            mqttClient: mqttClient
-          ),
+        // As telas agora são `const`, pois não recebem mais parâmetros
+        children: const [
+          Tela1(),
+          Tela2(),
+          Tela3(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

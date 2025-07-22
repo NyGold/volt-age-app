@@ -10,6 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   
+  # Pacote para gerenciar o estado da aplicação
+  provider: ^6.1.5
   # Ícones padrão do iOS
   cupertino_icons: ^1.0.6
   
