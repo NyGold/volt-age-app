@@ -1,15 +1,14 @@
-// ARQUIVO: lib/telas/tela_1.dart
+// ARQUIVO: lib/telas/tela_1.dart (VERSÃO FINAL E ROBUSTA)
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:volt_age_app/mqtt_services/mqtt_provider.dart';
+import 'package:volt_age_app/mqtt_services/mqtt_provider.dart'; // Corrija para o caminho do seu provider
 
 class Tela1 extends StatelessWidget {
   const Tela1({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Usamos o Consumer para que a tela reaja às mudanças do MqttProvider.
     return Consumer<MqttProvider>(
       builder: (context, provider, child) {
         return Scaffold(
@@ -35,9 +34,28 @@ class Tela1 extends StatelessWidget {
   /// Card que exibe o Status Geral da Cozinha.
   Widget _buildCardStatusPrincipal(MqttProvider provider) {
     final status = provider.gasAlerta;
-    final bool isAlert = status.contains("ALARME") || status.contains("FOGO_SEM_PRESENCA");
-    final Color statusColor = isAlert ? Colors.red.shade700 : Colors.green.shade700;
-    final IconData statusIcon = isAlert ? Icons.warning_amber_rounded : Icons.check_circle_outline_rounded;
+    
+    // --- LÓGICA DE UI APRIMORADA ---
+    bool isAlert = status.contains("ALARME") || status.contains("FOGO_SEM_PRESENCA");
+    bool isLoading = status == "Carregando...";
+    
+    Color statusColor;
+    IconData statusIcon;
+    Color cardBackgroundColor;
+
+    if (isLoading) {
+      statusColor = Colors.grey.shade600;
+      statusIcon = Icons.hourglass_empty_rounded;
+      cardBackgroundColor = Colors.grey.shade200;
+    } else if (isAlert) {
+      statusColor = Colors.red.shade700;
+      statusIcon = Icons.warning_amber_rounded;
+      cardBackgroundColor = Colors.red.shade50;
+    } else {
+      statusColor = Colors.green.shade700;
+      statusIcon = Icons.check_circle_outline_rounded;
+      cardBackgroundColor = Colors.green.shade50;
+    }
 
     String getMensagemStatus() {
       if (status.startsWith("FOGO_CONTANDO")) return "Contagem de segurança...";
@@ -47,13 +65,14 @@ class Tela1 extends StatelessWidget {
         case "FOGO_SEM_PRESENCA": return "PERIGO: Fogão esquecido!";
         case "ALERTA_APP": return "Gás fechado pelo celular";
         case "FOGO_TIMER_ATIVO": return "Timer de segurança pausado";
-        default: return status;
+        case "Carregando...": return "Verificando...";
+        default: return "Status: $status"; // Mostra o status desconhecido
       }
     }
 
     return Card(
       elevation: 6,
-      color: isAlert ? Colors.red.shade50 : Colors.green.shade50,
+      color: cardBackgroundColor, // Usa a cor de fundo definida
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(20.0),
@@ -163,7 +182,7 @@ class Tela1 extends StatelessWidget {
                     ? (bool value) {
                         provider.setLogicaEsquecimento(value);
                       }
-                    : null, // Desabilita o switch se estiver offline
+                    : null,
                 activeTrackColor: Colors.orange.shade200,
                 activeColor: Colors.orange.shade700,
               ),

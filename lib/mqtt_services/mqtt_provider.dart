@@ -1,187 +1,208 @@
-// ARQUIVO: lib/mqtt_provider.dart
+// ARQUIVO: lib/mqtt_provider.dart (VERSÃO COM CORREÇÃO DE RACE CONDITION)
 
 import 'dart:async';
+import 'dart:convert'; // Importe para usar jsonDecode
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
-import 'package:volt_age_app/services/notific_serv.dart';
 
 class MqttProvider extends ChangeNotifier {
   MqttClient? _mqttClient;
 
-  // Feeds da Cozinha (Tela1)
+  // Estados
   String gasAlerta = "Carregando...";
   String valvulaEstado = "Carregando...";
   bool logicaEsquecimentoAtivada = false;
-
-  // Feeds do Jardim (Tela2)
   double umidadeSolo = 0.0;
   String statusRega = "Carregando...";
-  double limiarUmidade = 35.0; // Valor inicial padrão
+  double limiarUmidade = 35.0;
 
-  // Feeds da Iluminação (Tela3)
-  // Adicione aqui os estados da Tela3 se necessário
+  // *** CORREÇÃO 1: Trava de segurança para evitar que dados antigos (HTTP)
+  // *** sobrescrevam dados novos (MQTT).
+  final Set<String> _feedsWithRealtimeData = {};
 
   bool get isConnected => _mqttClient?.connectionStatus?.state == MqttConnectionState.connected;
 
   MqttProvider() {
+    print("✅ [PROVIDER-LIFECYCLE] MqttProvider CRIADO!");
     _initialize();
   }
 
   Future<void> _initialize() async {
-    // Carrega os valores iniciais da API
-    await _fetchInitialValues();
-    // Conecta e se inscreve nos tópicos MQTT
+    // *** CORREÇÃO 2: Invertemos a ordem. Primeiro conectamos ao MQTT
+    // *** para começar a ouvir o mais rápido possível.
     await _initializeMqttConnection();
+    await _fetchInitialValues();
   }
 
   Future<void> _fetchInitialValues() async {
-    await _fetchFeedValue("gas-alerta", (value) {
-      gasAlerta = value;
-    });
-    await _fetchFeedValue("valvula-gas-estado", (value) {
-      valvulaEstado = value;
-    });
-    // Busca os valores iniciais para a Tela2
-    await _fetchFeedValue("jardim-umidade-solo", (value) {
-      umidadeSolo = double.tryParse(value) ?? 0.0;
-    });
-    await _fetchFeedValue("jardim-status-rega", (value) {
-      statusRega = value;
-    });
-    await _fetchFeedValue("jardim-limiar-umidade", (value) {
-      limiarUmidade = double.tryParse(value) ?? limiarUmidade;
-    });
-
-    // Adicione aqui a busca de valores para outras telas se necessário
-
-    // Notifica os widgets que os valores iniciais chegaram
+    print("🔄 [PROVIDER-FETCH] Buscando valores iniciais da API...");
+    await Future.wait([
+      _fetchFeedValue("gas-alerta", (value) => gasAlerta = value),
+      _fetchFeedValue("valvula-gas-estado", (value) => valvulaEstado = value),
+      _fetchFeedValue("jardim-umidade-solo", (value) => umidadeSolo = double.tryParse(value) ?? 0.0),
+      _fetchFeedValue("jardim-status-rega", (value) => statusRega = value),
+      _fetchFeedValue("jardim-limiar-umidade", (value) => limiarUmidade = double.tryParse(value) ?? limiarUmidade),
+    ]);
+    print("✅ [PROVIDER-FETCH] Valores iniciais processados! Notificando a UI...");
     notifyListeners();
   }
-
-  Future<void> _initializeMqttConnection() async {
-    try {
-      _mqttClient = await connect();
-      if (!isConnected) return;
-
-      final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"]!;
-      print("--- [PROVIDER] INICIANDO INSCRIÇÃO NOS TÓPICOS ---");
-
-      // Tópicos
-      final topics = [
-        "gas-alerta",
-        "valvula-gas-estado",
-        "jardim-umidade-solo",
-        "jardim-status-rega",
-        "jardim-limiar-umidade",
-        "iluminacao-status",
-        "fogo-timer-app"
-      ];
-
-      for (var feed in topics) {
-        final topic = "$usuario/feeds/$feed";
-        print("Inscrevendo-se em: $topic");
-        _mqttClient?.subscribe(topic, MqttQos.atLeastOnce);
-      }
-
-      print("--- [PROVIDER] INSCRIÇÕES CONCLUÍDAS ---");
-
-      _mqttClient?.updates?.listen(_onMqttMessageReceived);
-    } catch (e) {
-      print('[PROVIDER] ERRO NA CONEXÃO MQTT: $e');
-    }
-  }
-
+  
   void _onMqttMessageReceived(List<MqttReceivedMessage<MqttMessage?>>? c) {
     final recMess = c![0].payload as MqttPublishMessage;
     final message = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
     final topic = c[0].topic;
 
-    print('[PROVIDER] MQTT_RECEBIDO:: Tópico: <$topic>, Payload: <-- $message -->');
+    // *** CORREÇÃO 3: Marcamos o feed como "atualizado em tempo real".
+    final feedName = topic.split('/').last;
+    _feedsWithRealtimeData.add(feedName);
 
-    // Mapeia o tópico para a variável de estado correta
-    if (topic.endsWith('/feeds/jardim-umidade-solo')) {
-      umidadeSolo = double.tryParse(message) ?? 0.0;
-    } else if (topic.endsWith('/feeds/jardim-status-rega')) {
-      statusRega = message;
-      if (message == "REGAR_AGORA") {
-        NotificationService.showNotification(
-            title: '💧 Hora de Regar a Planta 💧',
-            body: 'A umidade do solo está baixa. Sua planta precisa de água.');
-      }
+    print("📬 [PROVIDER-MQTT] MENSAGEM RECEBIDA no tópico <$topic> | Payload: <-- $message -->");
+
+    bool stateChanged = false; // Flag para verificar se algo mudou
+    if (topic.endsWith('/feeds/gas-alerta') && gasAlerta != message) {
+      gasAlerta = message; stateChanged = true;
+    } else if (topic.endsWith('/feeds/valvula-gas-estado') && valvulaEstado != message) {
+      valvulaEstado = message; stateChanged = true;
+    } else if (topic.endsWith('/feeds/fogo-timer-app') && logicaEsquecimentoAtivada != (message == "ATIVAR_TIMER")) {
+      logicaEsquecimentoAtivada = (message == "ATIVAR_TIMER"); stateChanged = true;
+    } else if (topic.endsWith('/feeds/jardim-umidade-solo')) {
+      final newValue = double.tryParse(message) ?? 0.0;
+      if (umidadeSolo != newValue) { umidadeSolo = newValue; stateChanged = true; }
+    } else if (topic.endsWith('/feeds/jardim-status-rega') && statusRega != message) {
+      statusRega = message; stateChanged = true;
     } else if (topic.endsWith('/feeds/jardim-limiar-umidade')) {
-      limiarUmidade = double.tryParse(message) ?? limiarUmidade;
-    } else if (topic.endsWith('/feeds/gas-alerta')) {
-      gasAlerta = message;
-      // Lógica de notificação de gás
-    } else if (topic.endsWith('/feeds/valvula-gas-estado')) {
-      valvulaEstado = message;
-    } else if (topic.endsWith('/feeds/fogo-timer-app')) {
-      logicaEsquecimentoAtivada = (message == "ATIVAR_TIMER");
+      final newValue = double.tryParse(message) ?? limiarUmidade;
+      if (limiarUmidade != newValue) { limiarUmidade = newValue; stateChanged = true; }
     }
-    // Adicione outros `else if` para os demais tópicos...
 
-    // A mágica acontece aqui! Notifica todos os `Consumer` widgets.
+    if (stateChanged) {
+      print("🔔 [PROVIDER-STATE] Estado alterado! Notificando listeners...");
+      notifyListeners();
+    } else {
+      print("⚖️ [PROVIDER-STATE] Mensagem recebida, mas não alterou o estado atual.");
+    }
+  }
+
+  // *** CORREÇÃO 4: Método de busca de dados agora é mais seguro.
+  Future<void> _fetchFeedValue(String feed, Function(String) onValue) async {
+    // Se já recebemos um dado em tempo real para este feed, não fazemos a busca HTTP.
+    if (_feedsWithRealtimeData.contains(feed)) {
+      print("👍 [PROVIDER-FETCH] Busca HTTP para '$feed' ignorada, pois já temos um valor em tempo real.");
+      return;
+    }
+
+    await dotenv.load();
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
+    final key = dotenv.env["ADAFRUIT_IO_KEY"];
+    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
+    print("📡 [PROVIDER-FETCH] Buscando valor HTTP para o feed: $feed");
+
+    try {
+      final response = await http.get(Uri.parse(url), headers: {'X-AIO-Key': key ?? ''});
+      
+      // Checamos a trava de segurança novamente, caso um valor MQTT tenha chegado
+      // enquanto a requisição HTTP estava em andamento.
+      if (_feedsWithRealtimeData.contains(feed)) {
+        print("👍 [PROVIDER-FETCH] Valor HTTP para '$feed' ignorado, pois um dado em tempo real chegou durante a busca.");
+        return;
+      }
+
+      if (response.statusCode == 200) {
+        // Usando jsonDecode para mais segurança ao invés de Regex.
+        final data = jsonDecode(response.body);
+        final valor = data['value']?.toString() ?? '';
+        onValue(valor);
+      } else {
+        print("❌ [PROVIDER-FETCH] Falha ao buscar feed $feed: status ${response.statusCode}");
+      }
+    } catch (e) {
+      print("❌ [PROVIDER-FETCH] Erro na requisição HTTP para o feed $feed: $e");
+    }
+  }
+
+  // --- Nenhuma alteração necessária abaixo desta linha ---
+
+  Future<void> _initializeMqttConnection() async {
+    print("🔄 [PROVIDER-MQTT] Tentando conectar ao broker MQTT...");
+    try {
+      _mqttClient = await connect();
+      _mqttClient?.onDisconnected = _onDisconnected;
+      _mqttClient?.onConnected = _onConnected;
+      if (!isConnected) {
+        print("❌ [PROVIDER-MQTT] Falha ao conectar após a chamada inicial.");
+        return;
+      }
+      _subscribeToTopics();
+      _mqttClient?.updates?.listen(_onMqttMessageReceived);
+    } catch (e) {
+      print('❌ [PROVIDER-MQTT] ERRO CRÍTICO na conexão: $e');
+    }
+  }
+
+  void _subscribeToTopics() {
+    if (!isConnected) return;
+    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"]!;
+    print("🔄 [PROVIDER-MQTT] Inscrevendo-se nos tópicos...");
+    final topics = [
+      "gas-alerta", "valvula-gas-estado", "jardim-umidade-solo",
+      "jardim-status-rega", "jardim-limiar-umidade", "iluminacao-status", "fogo-timer-app"
+    ];
+    for (var feed in topics) {
+      _mqttClient?.subscribe("$usuario/feeds/$feed", MqttQos.atLeastOnce);
+    }
+    print("✅ [PROVIDER-MQTT] Inscrições concluídas.");
+  }
+
+  void _onConnected() {
+    print("✅ [PROVIDER-MQTT] Conectado ao broker!");
+    _subscribeToTopics();
+  }
+
+  void _onDisconnected() {
+    print("❌ [PROVIDER-MQTT] Desconectado do broker! Tentando reconectar em 5 segundos...");
+    Future.delayed(const Duration(seconds: 5), _initializeMqttConnection);
     notifyListeners();
   }
 
-  void setLogicaEsquecimento(bool ativada) {
-    logicaEsquecimentoAtivada = ativada;
-    final comando = ativada ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
-    _publishMessage("fogo-timer-app", comando);
-    notifyListeners(); // Notifica a UI sobre a mudança imediata do switch
-  }
-
-  void resetarAlertaDeFogo() {
-    _publishMessage("fogo-timer-reset", "RESET_TIMER");
-  }
-
-  // Ação de publicar o limiar (antes estava na Tela2)
-  void publicarLimiar(double valor) {
-    if (!isConnected) return;
-    _publishMessage("jardim-limiar-umidade", valor.round().toString());
-  }
-
-  // Ação de publicar o comando da válvula (exemplo, antes na Tela1)
   void publicarComandoValvula(String comando) {
-     if (!isConnected) return;
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
     _publishMessage("valvula-gas-controle", comando);
   }
 
-  // Método genérico para publicar mensagens
+  void setLogicaEsquecimento(bool ativada) {
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
+    logicaEsquecimentoAtivada = ativada;
+    final comando = ativada ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
+    _publishMessage("fogo-timer-app", comando);
+    print("🔔 [PROVIDER-STATE] Ação do usuário (Switch). Notificando listeners...");
+    notifyListeners();
+  }
+
+  void resetarAlertaDeFogo() {
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
+    _publishMessage("fogo-timer-reset", "RESET_TIMER");
+  }
+
+  void publicarLimiar(double valor) {
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
+    _publishMessage("jardim-limiar-umidade", valor.round().toString());
+  }
+
   void _publishMessage(String feed, String message) {
     final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"]!;
     final topic = "$usuario/feeds/$feed";
     final builder = MqttClientPayloadBuilder();
     builder.addString(message);
-    print('[PROVIDER] Publicando "$message" no tópico: $topic');
+    print('🚀 [PROVIDER-MQTT] Publicando "$message" no tópico: $topic');
     _mqttClient?.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
   }
-
-  // Método para buscar valor inicial de um feed (antes na Tela2)
-  Future<void> _fetchFeedValue(String feed, Function(String) onValue) async {
-    await dotenv.load();
-    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-    final key = dotenv.env["ADAFRUIT_IO_KEY"];
-    final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
-
-    try {
-      final response = await http.get(Uri.parse(url), headers: {'X-AIO-Key': key ?? ''});
-      if (response.statusCode == 200) {
-        final data = response.body;
-        final match = RegExp('"value":"(.*?)"').firstMatch(data);
-        final valor = match?.group(1) ?? data;
-        onValue(valor);
-      }
-    } catch (e) {
-      print('[PROVIDER] Erro ao buscar valor inicial do feed $feed: $e');
-    }
-  }
-
+  
   @override
   void dispose() {
+    print("❌ [PROVIDER-LIFECYCLE] MqttProvider DESCARTADO!");
     _mqttClient?.disconnect();
     super.dispose();
   }
