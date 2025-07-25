@@ -18,7 +18,6 @@ class MqttProvider extends ChangeNotifier {
   double umidadeSolo = 0.0;
   String statusRega = "Carregando...";
   double limiarUmidade = 35.0;
-  String iluminacaoStatus = "Carregando...";
 
   // *** CORREÇÃO 1: Trava de segurança para evitar que dados antigos (HTTP)
   // *** sobrescrevam dados novos (MQTT).
@@ -46,7 +45,6 @@ class MqttProvider extends ChangeNotifier {
       _fetchFeedValue("jardim-umidade-solo", (value) => umidadeSolo = double.tryParse(value) ?? 0.0),
       _fetchFeedValue("jardim-status-rega", (value) => statusRega = value),
       _fetchFeedValue("jardim-limiar-umidade", (value) => limiarUmidade = double.tryParse(value) ?? limiarUmidade),
-      _fetchFeedValue("iluminacao-status", (value) => iluminacaoStatus = value),
     ]);
     print("✅ [PROVIDER-FETCH] Valores iniciais processados! Notificando a UI...");
     notifyListeners();
@@ -56,9 +54,6 @@ class MqttProvider extends ChangeNotifier {
     final recMess = c![0].payload as MqttPublishMessage;
     final message = MqttPublishPayload.bytesToStringAsString(recMess.payload.message);
     final topic = c[0].topic;
-
-    // Print global para qualquer mensagem MQTT recebida
-    print("🌐 [PROVIDER-MQTT] RECEBIDO: Tópico=<$topic> | Payload=<$message>");
 
     // *** CORREÇÃO 3: Marcamos o feed como "atualizado em tempo real".
     final feedName = topic.split('/').last;
@@ -81,18 +76,12 @@ class MqttProvider extends ChangeNotifier {
     } else if (topic.endsWith('/feeds/jardim-limiar-umidade')) {
       final newValue = double.tryParse(message) ?? limiarUmidade;
       if (limiarUmidade != newValue) { limiarUmidade = newValue; stateChanged = true; }
-    } else if (topic.endsWith('/feeds/iluminacao-status')) {
-      print('💡 [DEBUG] Chamando atualizarIluminacaoStatus com valor: $message');
-      atualizarIluminacaoStatus(message);
     }
-    if (topic.endsWith('/feeds/iluminacao-status')) {
-      print('💡 [DEBUG] Mensagem de status da iluminação processada. Estado atual: $iluminacaoStatus');
-    }
-    
+
     if (stateChanged) {
       print("🔔 [PROVIDER-STATE] Estado alterado! Notificando listeners...");
       notifyListeners();
-    } else if (!topic.endsWith('/feeds/iluminacao-status')) {
+    } else {
       print("⚖️ [PROVIDER-STATE] Mensagem recebida, mas não alterou o estado atual.");
     }
   }
@@ -162,9 +151,7 @@ class MqttProvider extends ChangeNotifier {
       "jardim-status-rega", "jardim-limiar-umidade", "iluminacao-status", "fogo-timer-app"
     ];
     for (var feed in topics) {
-      final fullTopic = "$usuario/feeds/$feed";
-      _mqttClient?.subscribe(fullTopic, MqttQos.atLeastOnce);
-      print("🔔 [PROVIDER-MQTT] Subscrito em: $fullTopic");
+      _mqttClient?.subscribe("$usuario/feeds/$feed", MqttQos.atLeastOnce);
     }
     print("✅ [PROVIDER-MQTT] Inscrições concluídas.");
   }
@@ -202,22 +189,6 @@ class MqttProvider extends ChangeNotifier {
   void publicarLimiar(double valor) {
     if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
     _publishMessage("jardim-limiar-umidade", valor.round().toString());
-  }
-
-  void publicarComandoIluminacao(String comando) {
-    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
-    _publishMessage("iluminacao-controle", comando);
-  }
-
-  void atualizarIluminacaoStatus(String status) {
-    print('💡 [DEBUG] Entrou em atualizarIluminacaoStatus. Status recebido: $status | Status atual: $iluminacaoStatus');
-    if (iluminacaoStatus != status) {
-      iluminacaoStatus = status;
-      print('💡 [PROVIDER-STATE] Estado da iluminação atualizado: $iluminacaoStatus');
-      notifyListeners();
-    } else {
-      print('💡 [PROVIDER-STATE] Estado da iluminação recebido, mas não mudou.');
-    }
   }
 
   void _publishMessage(String feed, String message) {
