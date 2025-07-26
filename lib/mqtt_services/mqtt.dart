@@ -30,15 +30,23 @@ Future<MqttClient> connect({bool isBackground = false}) async {
 
   MqttServerClient client = MqttServerClient.withPort(broker, clientId, port);
   
-  // **CORREÇÃO:** Força o uso de uma conexão segura (TLS), que é necessária para a porta 8883.
   client.secure = true;
   client.securityContext = SecurityContext.defaultContext;
-  client.logging(on: false);
+  client.logging(on: true); // Habilita logs para debug
   client.setProtocolV311();
-  client.keepAlivePeriod = 60;
-  client.onDisconnected = onDisconnected;
-  client.onConnected = onConnected;
-  client.onSubscribed = onSubscribed;
+  client.keepAlivePeriod = 30; // Reduz para 30 segundos
+  client.autoReconnect = true; // Habilita reconexão automática
+  
+  // Adiciona handlers de conexão
+  client.onConnected = () {
+    print('✅ [MQTT] Conectado ao broker Adafruit IO');
+  };
+  client.onDisconnected = () {
+    print('❌ [MQTT] Desconectado do broker');
+  };
+  client.onSubscribed = (String topic) {
+    print('✅ [MQTT] Inscrito no tópico: $topic');
+  };
 
   final connMess = MqttConnectMessage()
       .withClientIdentifier(clientId)
@@ -58,16 +66,4 @@ Future<MqttClient> connect({bool isBackground = false}) async {
   }
 
   return client;
-}
-
-void onSubscribed(String topic) {
-  print('Subscription confirmed for topic $topic');
-}
-
-void onDisconnected() {
-  print('Disconnected');
-}
-
-void onConnected() {
-  print('Connected');
 }

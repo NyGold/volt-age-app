@@ -10,76 +10,45 @@
 */
 
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:mqtt_client/mqtt_client.dart';
+import 'package:provider/provider.dart';
+import 'package:volt_age_app/mqtt_services/mqtt_provider.dart';
 
-
-class Tela3 extends StatefulWidget {
-  final MqttClient? mqttClient;
-
-  const Tela3({super.key, this.mqttClient});
-
-  @override
-  State<Tela3> createState() => _Tela3State();
-}
-
-class _Tela3State extends State<Tela3> {
-  String luzStatus = 'Carregando...';
-  bool get isLuzAcesa => luzStatus.toUpperCase() == 'ACESA';
-  MqttClient? mqttClient;
-
-  // Feeds do Adafruit IO
-  final feedStatus = "iluminacao-status";
-  final feedComando = "iluminacao-comando";
-
-  @override
-  void initState() {
-    super.initState();
-  }
-
-  void _publicarComando(String comando) {
-    if (mqttClient == null || mqttClient?.connectionStatus?.state != MqttConnectionState.connected) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('MQTT não conectado. Tente novamente.')),
-      );
-      return;
-    }
-
-    final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
-    final comandoTopic = "$usuario/feeds/$feedComando";
-    final builder = MqttClientPayloadBuilder();
-    builder.addString(comando);
-
-    print('Publicando no tópico $comandoTopic: $comando');
-    mqttClient?.publishMessage(comandoTopic, MqttQos.atLeastOnce, builder.payload!);
-  }
+class Tela3 extends StatelessWidget {
+  const Tela3({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 40),
-              _buildCardStatus(),
-              const SizedBox(height: 30),
-              _buildCardControleManual(),
-               const SizedBox(height: 20),
-              _buildCardModoAutomatico(),
-              const SizedBox(height: 20),
-              _buildCardControleCor(),
-            ],
+    return Consumer<MqttProvider>(
+      builder: (context, provider, child) {
+        final luzStatus = provider.luzStatus;
+        final isLuzAcesa = luzStatus.toUpperCase() == 'ACESA';
+
+        return Scaffold(
+          body: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 40),
+                  _buildCardStatus(luzStatus, isLuzAcesa),
+                  const SizedBox(height: 30),
+                  _buildCardControleManual(context, provider),
+                  const SizedBox(height: 20),
+                  _buildCardModoAutomatico(context, provider),
+                  const SizedBox(height: 20),
+                  _buildCardControleCor(context, provider),
+                ],
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 
-  Widget _buildCardStatus() {
+  Widget _buildCardStatus(String luzStatus, bool isLuzAcesa) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -113,7 +82,7 @@ class _Tela3State extends State<Tela3> {
     );
   }
 
-  Widget _buildCardControleManual() {
+  Widget _buildCardControleManual(BuildContext context, MqttProvider provider) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -127,13 +96,13 @@ class _Tela3State extends State<Tela3> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton.icon(
-                  onPressed: () => _publicarComando('LIGAR_MANUAL'),
+                  onPressed: provider.isConnected ? () => provider.publicarComandoIluminacao('LIGAR_MANUAL') : null,
                   icon: const Icon(Icons.wb_sunny),
                   label: const Text('Ligar'),
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.white),
                 ),
                 ElevatedButton.icon(
-                  onPressed: () => _publicarComando('DESLIGAR_MANUAL'),
+                  onPressed: provider.isConnected ? () => provider.publicarComandoIluminacao('DESLIGAR_MANUAL') : null,
                   icon: const Icon(Icons.nightlight_round),
                   label: const Text('Desligar'),
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey, foregroundColor: Colors.white),
@@ -146,21 +115,25 @@ class _Tela3State extends State<Tela3> {
     );
   }
 
-   Widget _buildCardModoAutomatico() {
+  Widget _buildCardModoAutomatico(BuildContext context, MqttProvider provider) {
     return Card(
-       elevation: 4,
+      elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-       child: Padding(
+      child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-             const Text('Modo Automático', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-             const SizedBox(height: 16),
+            const Text('Modo Automático', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: () => _publicarComando('AUTOMATICO'),
+              onPressed: provider.isConnected ? () => provider.publicarComandoIluminacao('AUTOMATICO') : null,
               icon: const Icon(Icons.brightness_auto),
               label: const Text('Ativar Modo Automático'),
-               style: ElevatedButton.styleFrom(backgroundColor: Colors.deepPurple, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.deepPurple,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              ),
             ),
           ],
         ),
@@ -168,8 +141,7 @@ class _Tela3State extends State<Tela3> {
     );
   }
 
-
-  Widget _buildCardControleCor() {
+  Widget _buildCardControleCor(BuildContext context, MqttProvider provider) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -183,12 +155,12 @@ class _Tela3State extends State<Tela3> {
               spacing: 12,
               alignment: WrapAlignment.center,
               children: [
-                _buildColorButton(Colors.red, '#FF0000'),
-                _buildColorButton(Colors.green, '#00FF00'),
-                _buildColorButton(Colors.blue, '#0000FF'),
-                _buildColorButton(Colors.yellow, '#FFFF00'),
-                _buildColorButton(Colors.purple, '#800080'),
-                _buildColorButton(Colors.white, '#FFFFFF'),
+                _buildColorButton(provider, Colors.red, '#FF0000'),
+                _buildColorButton(provider, Colors.green, '#00FF00'),
+                _buildColorButton(provider, Colors.blue, '#0000FF'),
+                _buildColorButton(provider, Colors.yellow, '#FFFF00'),
+                _buildColorButton(provider, Colors.purple, '#800080'),
+                _buildColorButton(provider, Colors.white, '#FFFFFF'),
               ],
             )
           ],
@@ -197,9 +169,9 @@ class _Tela3State extends State<Tela3> {
     );
   }
 
-  Widget _buildColorButton(Color color, String hexCode) {
+  Widget _buildColorButton(MqttProvider provider, Color color, String hexCode) {
     return InkWell(
-      onTap: () => _publicarComando(hexCode),
+      onTap: provider.isConnected ? () => provider.publicarComandoIluminacao(hexCode) : null,
       child: Container(
         width: 40,
         height: 40,
