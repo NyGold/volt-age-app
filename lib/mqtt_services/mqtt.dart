@@ -32,20 +32,25 @@ Future<MqttClient> connect({bool isBackground = false}) async {
   
   client.secure = true;
   client.securityContext = SecurityContext.defaultContext;
-  client.logging(on: true); // Habilita logs para debug
-  client.setProtocolV311();
-  client.keepAlivePeriod = 30; // Reduz para 30 segundos
-  client.autoReconnect = true; // Habilita reconexão automática
+  client.logging(on: true);
+  client.keepAlivePeriod = 20;
+  client.autoReconnect = true;
   
-  // Adiciona handlers de conexão
-  client.onConnected = () {
-    print('✅ [MQTT] Conectado ao broker Adafruit IO');
+  // Adiciona mais logs
+  client.onSubscribed = (String topic) {
+    print('✅ [MQTT] Inscrito no tópico: $topic');
   };
+  
+  client.onSubscribeFail = (String topic) {
+    print('❌ [MQTT] Falha ao inscrever no tópico: $topic');
+  };
+  
   client.onDisconnected = () {
     print('❌ [MQTT] Desconectado do broker');
   };
-  client.onSubscribed = (String topic) {
-    print('✅ [MQTT] Inscrito no tópico: $topic');
+
+  client.onConnected = () {
+    print('✅ [MQTT] Conectado ao broker');
   };
 
   final connMess = MqttConnectMessage()

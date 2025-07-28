@@ -18,10 +18,15 @@ class Tela3 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    print("🔄 [TELA-3] Reconstruindo...");
     return Consumer<MqttProvider>(
       builder: (context, provider, child) {
-        final luzStatus = provider.luzStatus;
-        final isLuzAcesa = luzStatus.toUpperCase() == 'ACESA';
+        print("💡 [TELA-3] Status atual da luz: ${provider.luzStatus}");
+        
+        // Calcula os valores uma vez para evitar recálculos
+        final String luzStatus = provider.luzStatus;
+        final bool isLuzAcesa = luzStatus.toUpperCase() == 'ACESA';
+        final bool isConnected = provider.isConnected;
 
         return Scaffold(
           body: SingleChildScrollView(
@@ -34,11 +39,11 @@ class Tela3 extends StatelessWidget {
                   const SizedBox(height: 40),
                   _buildCardStatus(luzStatus, isLuzAcesa),
                   const SizedBox(height: 30),
-                  _buildCardControleManual(context, provider),
+                  _buildCardControleManual(context, provider, isConnected),
                   const SizedBox(height: 20),
-                  _buildCardModoAutomatico(context, provider),
+                  _buildCardModoAutomatico(context, provider, isConnected),
                   const SizedBox(height: 20),
-                  _buildCardControleCor(context, provider),
+                  _buildCardControleCor(context, provider, isConnected),
                 ],
               ),
             ),
@@ -82,7 +87,7 @@ class Tela3 extends StatelessWidget {
     );
   }
 
-  Widget _buildCardControleManual(BuildContext context, MqttProvider provider) {
+  Widget _buildCardControleManual(BuildContext context, MqttProvider provider, bool isConnected) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -96,13 +101,13 @@ class Tela3 extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 ElevatedButton.icon(
-                  onPressed: provider.isConnected ? () => provider.publicarComandoIluminacao('LIGAR_MANUAL') : null,
+                  onPressed: isConnected ? () => provider.publicarComandoIluminacao('LIGAR_MANUAL') : null,
                   icon: const Icon(Icons.wb_sunny),
                   label: const Text('Ligar'),
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.white),
                 ),
                 ElevatedButton.icon(
-                  onPressed: provider.isConnected ? () => provider.publicarComandoIluminacao('DESLIGAR_MANUAL') : null,
+                  onPressed: isConnected ? () => provider.publicarComandoIluminacao('DESLIGAR_MANUAL') : null,
                   icon: const Icon(Icons.nightlight_round),
                   label: const Text('Desligar'),
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey, foregroundColor: Colors.white),
@@ -115,7 +120,7 @@ class Tela3 extends StatelessWidget {
     );
   }
 
-  Widget _buildCardModoAutomatico(BuildContext context, MqttProvider provider) {
+  Widget _buildCardModoAutomatico(BuildContext context, MqttProvider provider, bool isConnected) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -126,7 +131,7 @@ class Tela3 extends StatelessWidget {
             const Text('Modo Automático', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 16),
             ElevatedButton.icon(
-              onPressed: provider.isConnected ? () => provider.publicarComandoIluminacao('AUTOMATICO') : null,
+              onPressed: isConnected ? () => provider.publicarComandoIluminacao('AUTOMATICO') : null,
               icon: const Icon(Icons.brightness_auto),
               label: const Text('Ativar Modo Automático'),
               style: ElevatedButton.styleFrom(
@@ -141,7 +146,7 @@ class Tela3 extends StatelessWidget {
     );
   }
 
-  Widget _buildCardControleCor(BuildContext context, MqttProvider provider) {
+  Widget _buildCardControleCor(BuildContext context, MqttProvider provider, bool isConnected) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -155,12 +160,12 @@ class Tela3 extends StatelessWidget {
               spacing: 12,
               alignment: WrapAlignment.center,
               children: [
-                _buildColorButton(provider, Colors.red, '#FF0000'),
-                _buildColorButton(provider, Colors.green, '#00FF00'),
-                _buildColorButton(provider, Colors.blue, '#0000FF'),
-                _buildColorButton(provider, Colors.yellow, '#FFFF00'),
-                _buildColorButton(provider, Colors.purple, '#800080'),
-                _buildColorButton(provider, Colors.white, '#FFFFFF'),
+                _buildColorButton(provider, Colors.red, '#FF0000', isConnected),
+                _buildColorButton(provider, Colors.green, '#00FF00', isConnected),
+                _buildColorButton(provider, Colors.blue, '#0000FF', isConnected),
+                _buildColorButton(provider, Colors.yellow, '#FFFF00', isConnected),
+                _buildColorButton(provider, Colors.purple, '#800080', isConnected),
+                _buildColorButton(provider, Colors.white, '#FFFFFF', isConnected),
               ],
             )
           ],
@@ -169,9 +174,9 @@ class Tela3 extends StatelessWidget {
     );
   }
 
-  Widget _buildColorButton(MqttProvider provider, Color color, String hexCode) {
+  Widget _buildColorButton(MqttProvider provider, Color color, String hexCode, bool isConnected) {
     return InkWell(
-      onTap: provider.isConnected ? () => provider.publicarComandoIluminacao(hexCode) : null,
+      onTap: isConnected ? () => provider.publicarComandoIluminacao(hexCode) : null,
       child: Container(
         width: 40,
         height: 40,

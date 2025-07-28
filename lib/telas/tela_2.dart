@@ -10,11 +10,16 @@ class Tela2 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Usamos o Consumer para ouvir as mudanças do MqttProvider
+    print("🔄 [TELA-2] Reconstruindo...");
     return Consumer<MqttProvider>(
       builder: (context, provider, child) {
-        // Toda a UI que depende dos dados do provider vai aqui dentro.
-        // Ela será reconstruída automaticamente quando `notifyListeners` for chamado.
+        print("📊 [TELA-2] Valores atuais - Umidade: ${provider.umidadeSolo}%, Status: ${provider.statusRega}");
+        
+        // Calcula os valores uma vez para evitar recálculos
+        final bool precisaRegar = provider.statusRega.toUpperCase() == "REGAR_AGORA";
+        final double umidadeAtual = provider.umidadeSolo;
+        final double limiarAtual = provider.limiarUmidade;
+
         return Scaffold(
           body: SingleChildScrollView(
             padding: const EdgeInsets.all(24.0),
@@ -22,9 +27,9 @@ class Tela2 extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 20),
-                _buildCardMedidorUmidade(context, provider),
+                _buildCardMedidorUmidade(context, umidadeAtual, precisaRegar),
                 const SizedBox(height: 20),
-                _buildCardAjusteSensibilidade(context, provider),
+                _buildCardAjusteSensibilidade(context, provider, limiarAtual),
               ],
             ),
           ),
@@ -33,8 +38,7 @@ class Tela2 extends StatelessWidget {
     );
   }
 
-  Widget _buildCardMedidorUmidade(BuildContext context, MqttProvider provider) {
-    final bool precisaRegar = provider.statusRega.toUpperCase() == "REGAR_AGORA";
+  Widget _buildCardMedidorUmidade(BuildContext context, double umidadeAtual, bool precisaRegar) {
     final String statusTexto = precisaRegar ? "Regar Agora" : "Umidade OK";
     final Color corStatus = precisaRegar ? Colors.orange.shade800 : Colors.cyan.shade700;
     final IconData iconStatus = precisaRegar ? Icons.water_drop_rounded : Icons.check_circle_outline_rounded;
@@ -64,7 +68,7 @@ class Tela2 extends StatelessWidget {
                     ),
                     pointers: <GaugePointer>[
                       RangePointer(
-                        value: provider.umidadeSolo, // <-- DADO DO PROVIDER
+                        value: umidadeAtual, // <-- DADO DO PROVIDER
                         cornerStyle: CornerStyle.bothCurve,
                         width: 0.2,
                         sizeUnit: GaugeSizeUnit.factor,
@@ -77,7 +81,7 @@ class Tela2 extends StatelessWidget {
                         positionFactor: 0.1,
                         angle: 90,
                         widget: Text(
-                          '${provider.umidadeSolo.toStringAsFixed(0)}%', // <-- DADO DO PROVIDER
+                          '${umidadeAtual.toStringAsFixed(0)}%', // <-- DADO DO PROVIDER
                           style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Color(0xFF0D47A1)),
                         ),
                       )
@@ -109,7 +113,7 @@ class Tela2 extends StatelessWidget {
     );
   }
 
-  Widget _buildCardAjusteSensibilidade(BuildContext context, MqttProvider provider) {
+  Widget _buildCardAjusteSensibilidade(BuildContext context, MqttProvider provider, double limiarAtual) {
     return Card(
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -120,15 +124,15 @@ class Tela2 extends StatelessWidget {
             const Text('Ajustar Sensibilidade', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(
-              'Regar quando a umidade for menor que: ${provider.limiarUmidade.round()}%', // <-- DADO DO PROVIDER
+              'Regar quando a umidade for menor que: ${limiarAtual.round()}%', // <-- DADO DO PROVIDER
               style: const TextStyle(fontSize: 16, color: Colors.black54),
             ),
             Slider(
-              value: provider.limiarUmidade, // <-- DADO DO PROVIDER
+              value: limiarAtual, // <-- DADO DO PROVIDER
               min: 10,
               max: 70,
               divisions: 60,
-              label: provider.limiarUmidade.round().toString(),
+              label: limiarAtual.round().toString(),
               onChanged: (double value) {
                 // Para não sobrecarregar, podemos apenas atualizar o provider no final.
                 // Mas se quiser a UI atualizando enquanto arrasta, chame um método no provider

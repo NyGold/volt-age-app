@@ -8,7 +8,7 @@ import 'package:volt_age_app/services/notific_serv.dart';
 import 'package:volt_age_app/home_page.dart'; // Importe a HomePage
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-// Função de callback para quando uma notificação é selecionada em background
+// Função de callback para quando uma notificação é selecionada em background'
 Future<void> notificationTapBackground(NotificationResponse notificationResponse) async {
   // Implemente aqui o que deve acontecer quando a notificação for tocada
   final payload = notificationResponse.payload;
