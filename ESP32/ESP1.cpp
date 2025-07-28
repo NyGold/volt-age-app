@@ -17,6 +17,7 @@ const int PINO_VALVULA_SOLENOIDE = 26;
 const int PINO_FAROL_VERMELHO    = 13;
 const int PINO_FAROL_AMARELO     = 12;
 const int PINO_FAROL_VERDE       = 14;
+
 // Módulo Jardinagem
 const int PINO_SENSOR_UMIDADE_SOLO = 34;
 
@@ -27,15 +28,15 @@ AdafruitIO_Feed *valvulaGasEstadoFeed = io.feed("valvula-gas-estado");
 AdafruitIO_Feed *valvulaGasControleSub = io.feed("valvula-gas-controle");
 AdafruitIO_Feed *fogoTimerResetSub     = io.feed("fogo-timer-reset");
 AdafruitIO_Feed *fogoTimerAppSub       = io.feed("fogo-timer-app");
+
 // Jardinagem (3 feeds)
 AdafruitIO_Feed *jardimUmidadeSoloFeed  = io.feed("jardim-umidade-solo");
 AdafruitIO_Feed *jardimStatusRegaFeed   = io.feed("jardim-status-rega");
 AdafruitIO_Feed *jardimLimiarUmidadeSub = io.feed("jardim-limiar-umidade");
 
-
 // --- Constantes de Controle e Timers ---
 const int  LIMIAR_GAS_ALERTA = 1500;
-const long TEMPO_MAX_FOGO_SEM_PRESENCA = 5 * 60 * 1000;
+const long TEMPO_MAX_FOGO_SEM_PRESENCA = 5 * 60 * 1000; // 5 minutos
 const long SENSOR_READ_INTERVAL = 500;
 const long PUBLISH_INTERVAL     = 20000;
 const long BLINK_INTERVAL_FAST = 250;
@@ -50,7 +51,13 @@ bool valvulaGasAberta = false;
 unsigned long timerFogoSemPresenca = 0;
 bool timerFogoSemPresencaAtivo = false;
 bool fogoTimerAppAtivo = false;
-enum SystemState { NORMAL, ALARME_VAZAMENTO_GAS, ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO, ALERTA_APLICATIVO };
+
+enum SystemState { 
+  NORMAL, 
+  ALARME_VAZAMENTO_GAS, 
+  ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO, 
+  ALERTA_APLICATIVO 
+};
 SystemState currentState = NORMAL;
 
 // --- Variáveis de Estado - Jardinagem ---
@@ -97,6 +104,7 @@ void setup() {
   Serial.println("\n--- Biochallenge 25 - Volt Age ---");
   Serial.println("Inicializando Módulo Cozinha + Jardinagem (com Slider)");
 
+  // Configuração de pinos
   pinMode(PINO_SENSOR_GAS_AO, INPUT);
   pinMode(PINO_SENSOR_CHAMA_DO, INPUT);
   pinMode(PINO_SENSOR_PIR, INPUT);
@@ -106,20 +114,24 @@ void setup() {
   pinMode(PINO_FAROL_VERDE, OUTPUT);
   pinMode(PINO_SENSOR_UMIDADE_SOLO, INPUT);
 
-  digitalWrite(PINO_VALVULA_SOLENOIDE, HIGH);
+  // Estado inicial dos atuadores
+  digitalWrite(PINO_VALVULA_SOLENOIDE, HIGH); // Fechada
   valvulaGasAberta = false;
   digitalWrite(PINO_FAROL_VERMELHO, LOW);
   digitalWrite(PINO_FAROL_AMARELO, LOW);
   digitalWrite(PINO_FAROL_VERDE, HIGH);
 
+  // Conecta ao Adafruit IO
   Serial.print("Conectando ao Adafruit IO...");
   io.connect();
 
+  // Registra callbacks
   valvulaGasControleSub->onMessage(handleValvulaControlMessage);
   fogoTimerResetSub->onMessage(handleFogoTimerResetMessage);
   fogoTimerAppSub->onMessage(handleFogoTimerAppMessage);
   jardimLimiarUmidadeSub->onMessage(handleJardimLimiarMessage);
 
+  // Tenta conectar com timeout
   int connect_retries = 0;
   while (io.status() < AIO_CONNECTED) {
     Serial.print(".");
@@ -130,49 +142,81 @@ void setup() {
       ESP.restart();
     }
   }
+
   Serial.println();
   Serial.println(io.statusText());
 
-  // Busca valores iniciais dos feeds de controle
+  // Sincroniza estados iniciais com o dashboard
   valvulaGasControleSub->get();
   fogoTimerResetSub->get();
   fogoTimerAppSub->get();
   jardimLimiarUmidadeSub->get();
 
-  // Sincroniza o estado inicial com o dashboard
   readSensors();
-  controlValvulaSolenoide(true);
   updateSystemState();
   publishStatusOnChange();
   publishData_IO_Periodic();
 }
 
-// --- Função loop() ---
+// --- Função loop() com reconexão MQTT robusta (sem io.disconnect) ---
 void loop() {
+  // Verifica se a conexão com o Adafruit IO foi perdida
+  if (io.status() != AIO_CONNECTED) {
+    unsigned long disconnectTime = millis();
+    Serial.println("\n*** Conexão com Adafruit IO perdida! Tentando reconectar... ***");
+
+    while (io.status() != AIO_CONNECTED) {
+      delay(1000);
+      io.connect(); // Tenta reconectar (não há io.disconnect())
+      Serial.print(".");
+
+      // Timeout de 30 segundos para evitar loop infinito
+      if (millis() - disconnectTime > 30000) {
+        Serial.println("\nFalha crítica ao reconectar. Reiniciando ESP32...");
+        ESP.restart();
+      }
+    }
+
+    Serial.println("\nReconectado ao Adafruit IO com sucesso!");
+    // Re-sincroniza os feeds de controle após reconexão
+    valvulaGasControleSub->get();
+    fogoTimerResetSub->get();
+    fogoTimerAppSub->get();
+    jardimLimiarUmidadeSub->get();
+  }
+
+  // Mantém o loop MQTT ativo
   io.run();
+
   unsigned long currentTime = millis();
 
+  // Leitura dos sensores
   if (currentTime - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
     readSensors();
     updateSystemState();
     lastSensorReadTime = currentTime;
-    
+
     Serial.print("["); Serial.print(millis()); Serial.print("ms] Gás: "); Serial.print(valorGasAtual);
     Serial.print(" | Cozinha: "); Serial.print(getStateString(currentState));
     Serial.print(" | Umidade: "); Serial.print(umidadePercent); Serial.print("%");
     Serial.print(" (Limiar: "); Serial.print(limiarUmidade); Serial.print("%)");
     Serial.println();
   }
+
+  // Publica mudanças de estado importantes
   publishStatusOnChange();
+
+  // Atualiza LEDs
   updateVisuals();
 
+  // Publicação periódica (jardinagem)
   if (currentTime - lastPublishTime >= PUBLISH_INTERVAL) {
     publishData_IO_Periodic();
     lastPublishTime = currentTime;
   }
 }
 
-// --- Implementação das Funções de Callback ---
+// --- Callbacks para mensagens dos feeds ---
 void handleValvulaControlMessage(AdafruitIO_Data *data) {
   const char* comando = data->toChar();
   if (strcmp(comando, "FECHAR_AGORA") == 0) {
@@ -222,17 +266,16 @@ void handleJardimLimiarMessage(AdafruitIO_Data *data) {
   Serial.println(limiarUmidade);
 }
 
-// --- Implementação das Funções Auxiliares ---
+// --- Funções auxiliares ---
 void readSensors() {
-  // Cozinha
   valorGasAtual = analogRead(PINO_SENSOR_GAS_AO);
   chamaDetectada = (digitalRead(PINO_SENSOR_CHAMA_DO) == LOW);
   presencaDetectada = (digitalRead(PINO_SENSOR_PIR) == HIGH);
-  // Jardinagem
+
   valorUmidadeRaw = analogRead(PINO_SENSOR_UMIDADE_SOLO);
   umidadePercent = map(valorUmidadeRaw, 2300, 4095, 100, 0);
-  if(umidadePercent > 100) umidadePercent = 100;
-  if(umidadePercent < 0) umidadePercent = 0;
+  if (umidadePercent > 100) umidadePercent = 100;
+  if (umidadePercent < 0) umidadePercent = 0;
 }
 
 void controlValvulaSolenoide(bool abrir) {
@@ -250,11 +293,13 @@ void updateSystemState() {
     controlValvulaSolenoide(false);
     return;
   }
+
   if (valorGasAtual > LIMIAR_GAS_ALERTA) {
     currentState = ALARME_VAZAMENTO_GAS;
     controlValvulaSolenoide(false);
     return;
   }
+
   if (chamaDetectada && !presencaDetectada && !fogoTimerAppAtivo) {
     if (!timerFogoSemPresencaAtivo) {
       timerFogoSemPresenca = millis();
@@ -265,14 +310,14 @@ void updateSystemState() {
       return;
     }
   } else {
-    if (timerFogoSemPresencaAtivo) {
-      timerFogoSemPresencaAtivo = false;
-    }
+    timerFogoSemPresencaAtivo = false;
   }
+
   if (currentState == ALERTA_APLICATIVO) {
     controlValvulaSolenoide(false);
     return;
   }
+
   currentState = NORMAL;
   controlValvulaSolenoide(true);
 }
@@ -281,7 +326,7 @@ void updateVisuals() {
   static unsigned long lastFastBlinkTime = 0;
   static unsigned long lastSlowBlinkTime = 0;
   static bool ledState = false;
-  
+
   digitalWrite(PINO_FAROL_VERMELHO, LOW);
   digitalWrite(PINO_FAROL_AMARELO, LOW);
   digitalWrite(PINO_FAROL_VERDE, LOW);
@@ -300,6 +345,7 @@ void updateVisuals() {
         digitalWrite(PINO_FAROL_VERDE, HIGH);
       }
       break;
+
     case ALARME_VAZAMENTO_GAS:
     case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
       if (millis() - lastFastBlinkTime >= BLINK_INTERVAL_FAST) {
@@ -308,6 +354,7 @@ void updateVisuals() {
         lastFastBlinkTime = millis();
       }
       break;
+
     case ALERTA_APLICATIVO:
       digitalWrite(PINO_FAROL_AMARELO, HIGH);
       break;
@@ -315,36 +362,35 @@ void updateVisuals() {
 }
 
 void publishStatusOnChange() {
-    unsigned long currentTime = millis();
-    if (currentTime - lastStatusChangePublishTime < STATUS_CHANGE_PUBLISH_RATE_LIMIT) {
-        return;
-    }
-    bool publishedSomething = false;
+  unsigned long currentTime = millis();
+  if (currentTime - lastStatusChangePublishTime < STATUS_CHANGE_PUBLISH_RATE_LIMIT) {
+    return;
+  }
 
-    if (valvulaGasAberta != lastValvulaGasState) {
-        valvulaGasEstadoFeed->save(valvulaGasAberta ? VALVULA_ABERTA : VALVULA_FECHADA);
-        lastValvulaGasState = valvulaGasAberta;
-        publishedSomething = true;
-    }
-    char* currentAlertaString = getGasAlertaString();
-    if (strcmp(currentAlertaString, lastGasAlertaPublishedString) != 0) {
-        gasAlertaFeed->save(currentAlertaString);
-        strcpy(lastGasAlertaPublishedString, currentAlertaString);
-        publishedSomething = true;
-    }
+  bool publishedSomething = false;
 
-    if (publishedSomething) {
-        lastStatusChangePublishTime = currentTime;
-    }
+  if (valvulaGasAberta != lastValvulaGasState) {
+    valvulaGasEstadoFeed->save(valvulaGasAberta ? VALVULA_ABERTA : VALVULA_FECHADA);
+    lastValvulaGasState = valvulaGasAberta;
+    publishedSomething = true;
+  }
+
+  char* currentAlertaString = getGasAlertaString();
+  if (strcmp(currentAlertaString, lastGasAlertaPublishedString) != 0) {
+    gasAlertaFeed->save(currentAlertaString);
+    strcpy(lastGasAlertaPublishedString, currentAlertaString);
+    publishedSomething = true;
+  }
+
+  if (publishedSomething) {
+    lastStatusChangePublishTime = currentTime;
+  }
 }
 
 void publishData_IO_Periodic() {
   Serial.println("Publicando dados periódicos (jardinagem)...");
-  
-  // Publica o valor percentual da umidade
   jardimUmidadeSoloFeed->save(umidadePercent);
 
-  // Com base na umidade e no limiar, publica o status da rega
   if (umidadePercent < limiarUmidade) {
     jardimStatusRegaFeed->save(REGAR_AGORA_STR);
   } else {
@@ -353,34 +399,40 @@ void publishData_IO_Periodic() {
 }
 
 char* getGasAlertaString() {
-    static char buffer[50];
-    switch (currentState) {
-        case ALARME_VAZAMENTO_GAS: strcpy(buffer, ALARME_GAS_STR); break;
-        case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO: strcpy(buffer, FOGO_SEM_PRESENCA_STR); break;
-        case ALERTA_APLICATIVO: strcpy(buffer, ALERTA_APP_STR); break;
-        case NORMAL:
-        default:
-            if (fogoTimerAppAtivo) {
-                strcpy(buffer, FOGO_TIMER_ATIVO_STR);
-            } else if (timerFogoSemPresencaAtivo) {
-                unsigned long tempoDecorrido = millis() - timerFogoSemPresenca;
-                long tempoRestanteMs = TEMPO_MAX_FOGO_SEM_PRESENCA - tempoDecorrido;
-                if (tempoRestanteMs < 0) tempoRestanteMs = 0;
-                sprintf(buffer, "FOGO_CONTANDO (%lu s)", (unsigned long)(tempoRestanteMs / 1000));
-            } else {
-                strcpy(buffer, OK_STR);
-            }
-            break;
-    }
-    return buffer;
+  static char buffer[50];
+  switch (currentState) {
+    case ALARME_VAZAMENTO_GAS:
+      strcpy(buffer, ALARME_GAS_STR);
+      break;
+    case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO:
+      strcpy(buffer, FOGO_SEM_PRESENCA_STR);
+      break;
+    case ALERTA_APLICATIVO:
+      strcpy(buffer, ALERTA_APP_STR);
+      break;
+    case NORMAL:
+    default:
+      if (fogoTimerAppAtivo) {
+        strcpy(buffer, FOGO_TIMER_ATIVO_STR);
+      } else if (timerFogoSemPresencaAtivo) {
+        unsigned long tempoDecorrido = millis() - timerFogoSemPresenca;
+        long tempoRestanteMs = TEMPO_MAX_FOGO_SEM_PRESENCA - tempoDecorrido;
+        if (tempoRestanteMs < 0) tempoRestanteMs = 0;
+        sprintf(buffer, "FOGO_CONTANDO (%lu s)", (unsigned long)(tempoRestanteMs / 1000));
+      } else {
+        strcpy(buffer, OK_STR);
+      }
+      break;
+  }
+  return buffer;
 }
 
 String getStateString(SystemState state) {
-    switch (state) {
-        case NORMAL: return "NORMAL";
-        case ALARME_VAZAMENTO_GAS: return "ALARME_VAZAMENTO_GAS";
-        case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO: return "FOGO_SEM_PRESENCA";
-        case ALERTA_APLICATIVO: return "ALERTA_APLICATIVO";
-        default: return "DESCONHECIDO";
-    }
+  switch (state) {
+    case NORMAL: return "NORMAL";
+    case ALARME_VAZAMENTO_GAS: return "ALARME_VAZAMENTO_GAS";
+    case ALARME_FOGO_SEM_PRESENCA_OU_ESQUECIMENTO: return "FOGO_SEM_PRESENCA";
+    case ALERTA_APLICATIVO: return "ALERTA_APLICATIVO";
+    default: return "DESCONHECIDO";
+  }
 }
