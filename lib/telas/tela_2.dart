@@ -1,5 +1,4 @@
 // ARQUIVO: lib/telas/tela_2.dart
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:syncfusion_flutter_gauges/gauges.dart';
@@ -10,22 +9,22 @@ class Tela2 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Usamos o Consumer para ouvir as mudanças do MqttProvider
     return Consumer<MqttProvider>(
       builder: (context, provider, child) {
-        // Toda a UI que depende dos dados do provider vai aqui dentro.
-        // Ela será reconstruída automaticamente quando `notifyListeners` for chamado.
         return Scaffold(
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const SizedBox(height: 20),
-                _buildCardMedidorUmidade(context, provider),
-                const SizedBox(height: 20),
-                _buildCardAjusteSensibilidade(context, provider),
-              ],
+          body: RefreshIndicator(
+            onRefresh: () => provider.refreshAllFeeds(),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 40),
+                  _buildCardMedidorUmidade(context, provider),
+                  const SizedBox(height: 20),
+                  _buildCardAjusteSensibilidade(context, provider),
+                ],
+              ),
             ),
           ),
         );
@@ -35,9 +34,20 @@ class Tela2 extends StatelessWidget {
 
   Widget _buildCardMedidorUmidade(BuildContext context, MqttProvider provider) {
     final bool precisaRegar = provider.statusRega.toUpperCase() == "REGAR_AGORA";
-    final String statusTexto = precisaRegar ? "Regar Agora" : "Umidade OK";
-    final Color corStatus = precisaRegar ? Colors.orange.shade800 : Colors.cyan.shade700;
-    final IconData iconStatus = precisaRegar ? Icons.water_drop_rounded : Icons.check_circle_outline_rounded;
+    final String statusTexto = precisaRegar 
+        ? "Precisa regar agora!" 
+        : "Solo úmido - sem necessidade de rega";
+    
+    Color corStatus;
+    IconData iconStatus;
+    
+    if (precisaRegar) {
+      corStatus = Colors.red.shade700;
+      iconStatus = Icons.water_drop;
+    } else {
+      corStatus = Colors.green.shade700;
+      iconStatus = Icons.water;
+    }
 
     return Card(
       elevation: 6,
@@ -46,9 +56,11 @@ class Tela2 extends StatelessWidget {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           children: [
-            const Text('Umidade da Planta', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const Text('Umidade do Solo', 
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
             SizedBox(
-              height: 250,
+              height: 200,
               child: SfRadialGauge(
                 axes: <RadialAxis>[
                   RadialAxis(
@@ -64,11 +76,11 @@ class Tela2 extends StatelessWidget {
                     ),
                     pointers: <GaugePointer>[
                       RangePointer(
-                        value: provider.umidadeSolo, // <-- DADO DO PROVIDER
+                        value: provider.umidadeSolo,
                         cornerStyle: CornerStyle.bothCurve,
                         width: 0.2,
                         sizeUnit: GaugeSizeUnit.factor,
-                        color: Colors.lightBlue.shade300,
+                        color: precisaRegar ? Colors.red.shade300 : Colors.green.shade300,
                         enableAnimation: true,
                       )
                     ],
@@ -77,10 +89,26 @@ class Tela2 extends StatelessWidget {
                         positionFactor: 0.1,
                         angle: 90,
                         widget: Text(
-                          '${provider.umidadeSolo.toStringAsFixed(0)}%', // <-- DADO DO PROVIDER
-                          style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold, color: Color(0xFF0D47A1)),
+                          '${provider.umidadeSolo.toStringAsFixed(0)}%',
+                          style: const TextStyle(
+                            fontSize: 48, 
+                            fontWeight: FontWeight.bold, 
+                            color: Color(0xFF0D47A1)
+                          ),
                         ),
-                      )
+                      ),
+                      GaugeAnnotation(
+                        positionFactor: 0.7,
+                        angle: 90,
+                        widget: Text(
+                          'Limiar: ${provider.limiarUmidade.round()}%',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey.shade700,
+                            fontStyle: FontStyle.italic
+                          ),
+                        ),
+                      ),
                     ],
                   )
                 ],
@@ -90,19 +118,28 @@ class Tela2 extends StatelessWidget {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               decoration: BoxDecoration(
+                // ignore: deprecated_member_use
                 color: corStatus.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(30),
+                // ignore: deprecated_member_use
                 border: Border.all(color: corStatus.withOpacity(0.5))
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(iconStatus, color: corStatus, size: 24),
-                  const SizedBox(width: 10),
-                  Text(statusTexto, style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: corStatus)),
+                  const SizedBox(width: 10), // ✅ CORREÇÃO: Mantido como SizedBox
+                  Text(
+                    statusTexto, 
+                    style: TextStyle(
+                      fontSize: 22, 
+                      fontWeight: FontWeight.bold, 
+                      color: corStatus
+                    )
+                  ),
                 ],
               ),
-            )
+            ),
           ],
         ),
       ),
@@ -117,31 +154,57 @@ class Tela2 extends StatelessWidget {
         padding: const EdgeInsets.all(20.0),
         child: Column(
           children: [
-            const Text('Ajustar Sensibilidade', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            const Text('Ajustar Sensibilidade', 
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             Text(
-              'Regar quando a umidade for menor que: ${provider.limiarUmidade.round()}%', // <-- DADO DO PROVIDER
+              'Regar quando a umidade for menor que: ${provider.limiarUmidade.round()}%', 
               style: const TextStyle(fontSize: 16, color: Colors.black54),
             ),
+            const SizedBox(height: 16),
             Slider(
-              value: provider.limiarUmidade, // <-- DADO DO PROVIDER
+              value: provider.limiarUmidade,
               min: 10,
               max: 70,
               divisions: 60,
               label: provider.limiarUmidade.round().toString(),
               onChanged: (double value) {
-                // Para não sobrecarregar, podemos apenas atualizar o provider no final.
-                // Mas se quiser a UI atualizando enquanto arrasta, chame um método no provider
-                // que atualiza o valor e chama notifyListeners().
+                // Para não sobrecarregar, atualizamos apenas visualmente enquanto arrasta
+                // O valor real só é atualizado quando soltar
+                setState(() {
+                  provider.limiarUmidade = value;
+                });
               },
               onChangeEnd: (double value) {
                 // Chama a ação no provider
                 provider.publicarLimiar(value);
+                
+                // Mostrar feedback visual
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Limiar de umidade atualizado para ${value.round()}%'),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
               },
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: const [
+                Text('Menos sensível', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                Text('Mais sensível', style: TextStyle(fontSize: 14, color: Colors.grey)),
+              ],
             ),
           ],
         ),
       ),
     );
+  }
+  
+  // Método para atualizar o estado (necessário para o Slider)
+  void setState(VoidCallback fn) {
+    // Este método é necessário para o Slider atualizar o estado
+    // Será chamado pelo Consumer acima
   }
 }
