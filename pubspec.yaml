@@ -1,5 +1,5 @@
 name: volt_age_app
-description: "A new Flutter project."
+description: "Aplicativo Volt Age - Sistema de segurança residencial inteligente"
 publish_to: 'none' 
 version: 1.0.0+1
 
@@ -25,18 +25,21 @@ dependencies:
   http: ^1.2.1
   
   # Para exibir notificações locais no dispositivo
-  flutter_local_notifications: ^17.1.2
+  flutter_local_notifications: ^19.4.0
+  
+  # Pacote para armazenamento local de preferências
+  shared_preferences: ^2.2.2
   
   # Pacote de widgets para criar medidores (gauges) visuais
   # Adicionado para corrigir os erros e implementar o medidor de umidade
-  syncfusion_flutter_gauges: ^25.2.7
+  syncfusion_flutter_gauges: ^30.1.42
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   
   # Ferramentas de análise de código para manter a qualidade
-  flutter_lints: ^3.0.0
+  flutter_lints: ^6.0.0
 
 # Configurações específicas do Flutter
 flutter:
