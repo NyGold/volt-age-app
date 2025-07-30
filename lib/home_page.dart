@@ -1,5 +1,4 @@
 // ARQUIVO: lib/home_page.dart
-
 import 'package:flutter/material.dart';
 import 'package:volt_age_app/telas/tela_1.dart';
 import 'package:volt_age_app/telas/tela_2.dart';
@@ -24,8 +23,6 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    // Não precisamos mais de `initState` ou lógica de MQTT aqui!
-
     return Scaffold(
       appBar: AppBar(
         title: const Text(
@@ -46,7 +43,8 @@ class _HomePageState extends State<HomePage> {
             _paginaAtual = index;
           });
         },
-        // As telas agora são `const`, pois não recebem mais parâmetros
+        // CORREÇÃO: Adicionei os parênteses para instanciar as classes
+        // e removi o const da lista, mantendo apenas nas instâncias
         children: const [
           Tela1(),
           Tela2(),

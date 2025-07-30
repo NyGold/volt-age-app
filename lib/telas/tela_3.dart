@@ -172,6 +172,11 @@ class Tela3 extends StatelessWidget {
                 _buildColorButton(provider, Colors.yellow, '#FFFF00'),
                 _buildColorButton(provider, Colors.purple, '#800080'),
                 _buildColorButton(provider, Colors.white, '#FFFFFF'),
+                // Adicionando as 4 novas cores
+                _buildColorButton(provider, Colors.orange, '#FFA500'),
+                _buildColorButton(provider, Colors.pink, '#FFC0CB'),
+                _buildColorButton(provider, Colors.teal, '#008080'),
+                _buildColorButton(provider, Colors.brown, '#A52A2A'),
               ],
             )
           ],

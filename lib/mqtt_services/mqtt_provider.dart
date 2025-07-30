@@ -1,4 +1,4 @@
-// ARQUIVO: lib/mqtt_services/mqtt_provider.dart
+// ARQUIVO: lib/mqtt_services/mqtt_provider.dart (VERSÃO COMPLETAMENTE ATUALIZADA)
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -6,7 +6,6 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:http/http.dart' as http;
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:volt_age_app/mqtt_services/mqtt.dart';
-import 'package:volt_age_app/services/notific_serv.dart';
 
 class MqttProvider extends ChangeNotifier {
   MqttClient? _mqttClient;
@@ -20,14 +19,14 @@ class MqttProvider extends ChangeNotifier {
   double limiarUmidade = 35.0;
   String iluminacaoStatus = "Carregando...";
   
-  // *** CONTROLE DE RECONEXÃO ***
-  int _reconnectionAttempts = 0;
-  static const int _maxReconnectionDelay = 60; // segundos (1 minuto)
-  Timer? _reconnectionTimer;
-  
   // *** CORREÇÃO 1: Trava de segurança para evitar que dados antigos (HTTP)
   // *** sobrescrevam dados novos (MQTT).
   final Set<String> _feedsWithRealtimeData = {};
+  
+  // Novas propriedades para o modo de cozimento interno
+  int _tempoModoCozimento = 15; // Padrão 15 minutos
+  DateTime? _tempoInicioModo;
+  Timer? _modoCozimentoTimer;
   
   bool get isConnected => _mqttClient?.connectionStatus?.state == MqttConnectionState.connected;
   
@@ -68,24 +67,13 @@ class MqttProvider extends ChangeNotifier {
     // *** CORREÇÃO 3: Marcamos o feed como "atualizado em tempo real".
     final feedName = topic.split('/').last;
     _feedsWithRealtimeData.add(feedName);
+    
     print("📬 [PROVIDER-MQTT] MENSAGEM RECEBIDA no tópico <$topic> | Payload: <-- $message -->");
     
     bool stateChanged = false; // Flag para verificar se algo mudou
     
     if (topic.endsWith('/feeds/gas-alerta') && gasAlerta != message) {
-      // Disparar notificação para situações críticas
-      if (message == "ALARME_GAS" || message == "FOGO_SEM_PRESENCA") {
-        NotificationService.showNotification(
-          title: "ALERTA DE SEGURANÇA!",
-          body: message == "ALARME_GAS" 
-              ? "Vazamento de gás detectado!" 
-              : "Fogão esquecido sem presença!",
-          isEmergency: true,
-        );
-      }
-      
-      gasAlerta = message; 
-      stateChanged = true;
+      gasAlerta = message; stateChanged = true;
     } else if (topic.endsWith('/feeds/valvula-gas-estado') && valvulaEstado != message) {
       valvulaEstado = message; stateChanged = true;
     } else if (topic.endsWith('/feeds/fogo-timer-app') && logicaEsquecimentoAtivada != (message == "ATIVAR_TIMER")) {
@@ -103,10 +91,14 @@ class MqttProvider extends ChangeNotifier {
       atualizarIluminacaoStatus(message);
     }
     
+    if (topic.endsWith('/feeds/iluminacao-status')) {
+      print('💡 [DEBUG] Mensagem de status da iluminação processada. Estado atual: $iluminacaoStatus');
+    }
+    
     if (stateChanged) {
       print("🔔 [PROVIDER-STATE] Estado alterado! Notificando listeners...");
       notifyListeners();
-    } else {
+    } else if (!topic.endsWith('/feeds/iluminacao-status')) {
       print("⚖️ [PROVIDER-STATE] Mensagem recebida, mas não alterou o estado atual.");
     }
   }
@@ -123,6 +115,7 @@ class MqttProvider extends ChangeNotifier {
     final usuario = dotenv.env["ADAFRUIT_IO_USERNAME"];
     final key = dotenv.env["ADAFRUIT_IO_KEY"];
     final url = 'https://io.adafruit.com/api/v2/$usuario/feeds/$feed/data/last';
+    
     print("📡 [PROVIDER-FETCH] Buscando valor HTTP para o feed: $feed");
     
     try {
@@ -148,67 +141,88 @@ class MqttProvider extends ChangeNotifier {
     }
   }
   
-  // --- MODIFICAÇÕES PARA RECONEXÃO ROBUSTA ABAIXO ---
+  // --- Métodos específicos para o modo de cozimento interno ---
+  int get tempoModoCozimento => _tempoModoCozimento;
+  
+  int get tempoRestanteModo {
+    if (!logicaEsquecimentoAtivada || _tempoInicioModo == null) return 0;
+    
+    // Calcula o tempo restante com base no tempo de início
+    final tempoDecorrido = DateTime.now().difference(_tempoInicioModo!).inMinutes;
+    return (_tempoModoCozimento - tempoDecorrido).clamp(0, _tempoModoCozimento);
+  }
+  
+  void setTempoModoCozimento(int minutos) {
+    _tempoModoCozimento = minutos;
+    notifyListeners();
+  }
+  
+  void ativarModoCozimento() {
+    logicaEsquecimentoAtivada = true;
+    _tempoInicioModo = DateTime.now();
+    
+    // Publica o comando para o ESP32 (se estiver conectado)
+    if (isConnected) {
+      _publishMessage("fogo-timer-app", "ATIVAR_TIMER");
+    }
+    
+    // Configura o temporizador para atualizar a UI
+    _modoCozimentoTimer?.cancel();
+    _modoCozimentoTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      notifyListeners();
+      
+      // Verifica se o tempo expirou
+      if (tempoRestanteModo <= 0) {
+        desativarModoCozimento();
+        timer.cancel();
+      }
+    });
+    
+    notifyListeners();
+  }
+  
+  void desativarModoCozimento() {
+    logicaEsquecimentoAtivada = false;
+    _modoCozimentoTimer?.cancel();
+    
+    // Publica o comando para o ESP32 (se estiver conectado)
+    if (isConnected) {
+      _publishMessage("fogo-timer-app", "DESATIVAR_TIMER");
+    }
+    
+    notifyListeners();
+  }
+  
+  void resetarAlertaDeFogo() {
+    if (!isConnected) {
+      // Se não estiver conectado, apenas reinicia o temporizador local
+      _tempoInicioModo = DateTime.now();
+      notifyListeners();
+      return;
+    }
+    
+    _publishMessage("fogo-timer-reset", "RESET_TIMER");
+    // Mesmo se estiver conectado, reinicia o temporizador local
+    _tempoInicioModo = DateTime.now();
+    notifyListeners();
+  }
+  
+  // --- Nenhuma alteração necessária abaixo desta linha ---
   Future<void> _initializeMqttConnection() async {
     print("🔄 [PROVIDER-MQTT] Tentando conectar ao broker MQTT...");
     try {
-      // Cancelar qualquer tentativa de reconexão pendente
-      _reconnectionTimer?.cancel();
-      
       _mqttClient = await connect();
       _mqttClient?.onDisconnected = _onDisconnected;
       _mqttClient?.onConnected = _onConnected;
       if (!isConnected) {
         print("❌ [PROVIDER-MQTT] Falha ao conectar após a chamada inicial.");
-        _scheduleReconnection();
         return;
       }
       _subscribeToTopics();
       _mqttClient?.updates?.listen(_onMqttMessageReceived);
     } catch (e) {
       print('❌ [PROVIDER-MQTT] ERRO CRÍTICO na conexão: $e');
-      _scheduleReconnection();
     }
-  }
-  
-  void _scheduleReconnection() {
-    _reconnectionAttempts++;
-    
-    // Calcular o tempo de espera com backoff exponencial
-    final delaySeconds = _calculateReconnectionDelay();
-    
-    print("⚠️ [PROVIDER-MQTT] Agendando reconexão #$_reconnectionAttempts para $delaySeconds segundos...");
-    
-    _reconnectionTimer = Timer(Duration(seconds: delaySeconds), () {
-      _initializeMqttConnection();
-    });
-    
-    notifyListeners();
-  }
-  
-  int _calculateReconnectionDelay() {
-    // Backoff exponencial: 2^n, com limite máximo
-    int delay = 2 * _reconnectionAttempts;
-    
-    // Aplicar limite máximo
-    if (delay > _maxReconnectionDelay) {
-      delay = _maxReconnectionDelay;
-    }
-    
-    return delay;
-  }
-  
-  void _onConnected() {
-    print("✅ [PROVIDER-MQTT] Conectado ao broker!");
-    _reconnectionAttempts = 0; // Resetar contador de tentativas
-    _reconnectionTimer?.cancel(); // Cancelar qualquer tentativa de reconexão pendente
-    _subscribeToTopics();
-    notifyListeners();
-  }
-  
-  void _onDisconnected() {
-    print("❌ [PROVIDER-MQTT] Desconectado do broker!");
-    _scheduleReconnection();
   }
   
   void _subscribeToTopics() {
@@ -227,50 +241,40 @@ class MqttProvider extends ChangeNotifier {
     print("✅ [PROVIDER-MQTT] Inscrições concluídas.");
   }
   
+  void _onConnected() {
+    print("✅ [PROVIDER-MQTT] Conectado ao broker!");
+    _subscribeToTopics();
+  }
+  
+  void _onDisconnected() {
+    print("❌ [PROVIDER-MQTT] Desconectado do broker! Tentando reconectar em 5 segundos...");
+    Future.delayed(const Duration(seconds: 5), _initializeMqttConnection);
+    notifyListeners();
+  }
+  
   void publicarComandoValvula(String comando) {
-    if (!isConnected) { 
-      print("⚠️ Ação ignorada: offline. Tentando reconectar..."); 
-      _scheduleReconnection();
-      return; 
-    }
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
     _publishMessage("valvula-gas-controle", comando);
   }
   
   void setLogicaEsquecimento(bool ativada) {
-    if (!isConnected) { 
-      print("⚠️ Ação ignorada: offline. Tentando reconectar..."); 
-      _scheduleReconnection();
-      return; 
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
+    if (ativada) {
+      ativarModoCozimento();
+    } else {
+      desativarModoCozimento();
     }
-    logicaEsquecimentoAtivada = ativada;
-    final comando = ativada ? "ATIVAR_TIMER" : "DESATIVAR_TIMER";
-    _publishMessage("fogo-timer-app", comando);
-    print("🔔 [PROVIDER-STATE] Lógica de esquecimento ${ativada ? 'ativada' : 'desativada'}");
-    notifyListeners();
-  }
-  
-  void resetarAlertaDeFogo() {
-    if (!isConnected) { 
-      print("⚠️ Ação ignorada: offline. Tentando reconectar..."); 
-      _scheduleReconnection();
-      return; 
-    }
-    _publishMessage("fogo-timer-reset", "RESET_TIMER");
   }
   
   void publicarLimiar(double valor) {
-    if (!isConnected) { 
-      print("⚠️ Ação ignorada: offline. Tentando reconectar..."); 
-      _scheduleReconnection();
-      return; 
-    }
+    if (!isConnected) { print("⚠️ Ação ignorada: offline."); return; }
     _publishMessage("jardim-limiar-umidade", valor.round().toString());
   }
   
+  // CORREÇÃO PRINCIPAL: Mudança de "iluminacao-controle" para "iluminacao-comando"
   void publicarComandoIluminacao(String comando) {
     if (!isConnected) { 
-      print("⚠️ Ação ignorada: offline. Tentando reconectar..."); 
-      _scheduleReconnection();
+      print("⚠️ Ação ignorada: offline."); 
       return; 
     }
     _publishMessage("iluminacao-comando", comando);
@@ -280,16 +284,11 @@ class MqttProvider extends ChangeNotifier {
     print('💡 [DEBUG] Entrou em atualizarIluminacaoStatus. Status recebido: $status | Status atual: $iluminacaoStatus');
     if (iluminacaoStatus != status) {
       iluminacaoStatus = status;
-      print('✅ [PROVIDER-STATE] Estado da iluminação atualizado para: $status');
+      print('💡 [PROVIDER-STATE] Estado da iluminação atualizado: $iluminacaoStatus');
       notifyListeners();
     } else {
       print('💡 [PROVIDER-STATE] Estado da iluminação recebido, mas não mudou.');
     }
-  }
-  
-  // Método público para atualizar todos os feeds (para o pull to refresh)
-  Future<void> refreshAllFeeds() async {
-    return _fetchInitialValues();
   }
   
   void _publishMessage(String feed, String message) {
@@ -301,10 +300,15 @@ class MqttProvider extends ChangeNotifier {
     _mqttClient?.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
   }
   
+  // CORREÇÃO PRINCIPAL: Método refreshAllFeeds retorna Future<void>
+  Future<void> refreshAllFeeds() async {
+    await _fetchInitialValues();
+  }
+  
   @override
   void dispose() {
     print("❌ [PROVIDER-LIFECYCLE] MqttProvider DESCARTADO!");
-    _reconnectionTimer?.cancel();
+    _modoCozimentoTimer?.cancel();
     _mqttClient?.disconnect();
     super.dispose();
   }

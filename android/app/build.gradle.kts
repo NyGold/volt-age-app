@@ -22,10 +22,11 @@ android {
 
     defaultConfig {
         applicationId = "com.example.volt_age_app"
-        minSdk = 24  // Alterado para 24 (mínimo para flutter_local_notifications 19.4.0)
+        minSdk = 24
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true
     }
 
     buildTypes {
@@ -42,4 +43,6 @@ flutter {
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     implementation("androidx.core:core-ktx:1.12.0")
+    // DEPENDÊNCIA CRÍTICA QUE FALTA:
+    implementation("androidx.multidex:multidex:2.0.1")
 }

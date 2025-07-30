@@ -9,11 +9,30 @@ class Tela2 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return const Tela2Content();
+  }
+}
+
+class Tela2Content extends StatefulWidget {
+  const Tela2Content({super.key});
+
+  @override
+  State<Tela2Content> createState() => _Tela2ContentState();
+}
+
+class _Tela2ContentState extends State<Tela2Content> {
+  Future<void> _refreshData() async {
+    final provider = Provider.of<MqttProvider>(context, listen: false);
+    await provider.refreshAllFeeds();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Consumer<MqttProvider>(
       builder: (context, provider, child) {
         return Scaffold(
           body: RefreshIndicator(
-            onRefresh: () => provider.refreshAllFeeds(),
+            onRefresh: _refreshData,
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24.0),
               child: Column(
@@ -35,8 +54,8 @@ class Tela2 extends StatelessWidget {
   Widget _buildCardMedidorUmidade(BuildContext context, MqttProvider provider) {
     final bool precisaRegar = provider.statusRega.toUpperCase() == "REGAR_AGORA";
     final String statusTexto = precisaRegar 
-        ? "Precisa regar agora!" 
-        : "Solo úmido - sem necessidade de rega";
+        ? "Regue o Solo!" 
+        : "Solo úmido";
     
     Color corStatus;
     IconData iconStatus;
@@ -128,7 +147,7 @@ class Tela2 extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(iconStatus, color: corStatus, size: 24),
-                  const SizedBox(width: 10), // ✅ CORREÇÃO: Mantido como SizedBox
+                  const SizedBox(width: 10),
                   Text(
                     statusTexto, 
                     style: TextStyle(
@@ -169,14 +188,13 @@ class Tela2 extends StatelessWidget {
               divisions: 60,
               label: provider.limiarUmidade.round().toString(),
               onChanged: (double value) {
-                // Para não sobrecarregar, atualizamos apenas visualmente enquanto arrasta
-                // O valor real só é atualizado quando soltar
-                setState(() {
-                  provider.limiarUmidade = value;
-                });
+                // Atualiza o valor visualmente enquanto arrasta
+                // Mas não atualiza no ESP32 ainda
+                provider.limiarUmidade = value;
+                setState(() {}); // Atualiza a UI para mostrar o novo valor
               },
               onChangeEnd: (double value) {
-                // Chama a ação no provider
+                // Chama a ação no provider para atualizar no ESP32
                 provider.publicarLimiar(value);
                 
                 // Mostrar feedback visual
@@ -200,11 +218,5 @@ class Tela2 extends StatelessWidget {
         ),
       ),
     );
-  }
-  
-  // Método para atualizar o estado (necessário para o Slider)
-  void setState(VoidCallback fn) {
-    // Este método é necessário para o Slider atualizar o estado
-    // Será chamado pelo Consumer acima
   }
 }
