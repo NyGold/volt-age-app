@@ -15,11 +15,15 @@ AdafruitIO_WiFi io(IO_USERNAME, IO_KEY, WIFI_SSID, WIFI_PASS);
 AdafruitIO_Feed *iluminacaoComandoSub = io.feed("iluminacao-comando"); // Feed de comando (Nuvem -> ESP32)
 AdafruitIO_Feed *iluminacaoStatusFeed = io.feed("iluminacao-status");  // Feed de status (ESP32 -> Nuvem)
 
+// --- Definição de strings estáticas para publicação (SOLUÇÃO DO ESP32#1) ---
+static char ILUMINACAO_ACESA[] = "ACESA";
+static char ILUMINACAO_APAGADA[] = "APAGADA";
+
 // --- Pinos e Configurações ---
 const int PINO_PIR      = 15; // Pino para o sensor de presença (D15)
 const int PINO_FITA_LED = 2;  // Pino de dados da fita de LED WS2812B (D2)
 const int NUM_LEDS      = 30; // Número de LEDs na sua fita
-const int BRIGHTNESS    = 150;// Brilho da fita (0-255)
+const int BRIGHTNESS    = 150; // Brilho da fita (0-255)
 
 // Pinos I2C para o sensor BH1750
 const int PINO_SDA = 21;  // Pino para comunicação SDA (Serial Data)
@@ -39,7 +43,7 @@ enum IluminacaoMode { AUTOMATICO, MANUAL_LIGADO, MANUAL_DESLIGADO };
 IluminacaoMode currentMode = AUTOMATICO;
 
 CRGB leds[NUM_LEDS];
-uint32_t corAtual = CRGB::FloralWhite; // Cor padrão inicial
+uint32_t corAtual = CRGB::White; // Cor padrão inicial
 bool luzesEstaoAcesas = false;
 unsigned long ultimoMovimentoDetectado = 0;
 float luminosidadeAtual = 0.0;
@@ -95,7 +99,12 @@ void setup() {
   Serial.println(io.statusText());
 
   iluminacaoComandoSub->get(); // Busca o último comando ao iniciar
-  publishStatusOnChange();     // Publica o estado inicial
+  
+  // Publica o estado inicial explicitamente
+  iluminacaoStatusFeed->save(luzesEstaoAcesas ? ILUMINACAO_ACESA : ILUMINACAO_APAGADA);
+  ultimoStatusPublicado = luzesEstaoAcesas;
+  ultimoPublishTime = millis();
+  Serial.println("Estado inicial publicado no feed iluminacao-status");
 }
 
 // --- Função loop() ---
@@ -147,26 +156,29 @@ void loop() {
 
 // --- Função para verificar e reconectar ao MQTT ---
 void verificarConexaoMQTT() {
-  // CORREÇÃO AQUI: Usando io.status() em vez de io.connected()
-  // AIO_DISCONNECTED = 0, AIO_IDLE = 1, AIO_CONNECTED = 2
-  if (io.status() < AIO_CONNECTED && (millis() - ultimoTempoTentativaReconexao > INTERVALO_RECONEXAO_MQTT)) {
-    Serial.println("Conexão MQTT perdida. Tentando reconectar...");
-    
-    // Atualiza o tempo da última tentativa
-    ultimoTempoTentativaReconexao = millis();
-    
-    // Tenta reconectar
-    io.connect();
-    
-    // Verifica se reconectou com sucesso
-    if (io.status() == AIO_CONNECTED) {
-      Serial.println("Reconectado com sucesso ao Adafruit IO!");
-      // Reconecta aos feeds
-      iluminacaoComandoSub->onMessage(handleIluminacaoComando);
-      iluminacaoComandoSub->get(); // Atualiza com o último comando
-    } else {
-      Serial.print("Falha na reconexão ao Adafruit IO. Status: ");
-      Serial.println(io.statusText());
+  // Verifica o status da conexão a cada INTERVALO_RECONEXAO_MQTT
+  if (millis() - ultimoTempoTentativaReconexao > INTERVALO_RECONEXAO_MQTT) {
+    // Usando io.status() para verificar conexão
+    // AIO_DISCONNECTED = 0, AIO_IDLE = 1, AIO_CONNECTED = 2
+    if (io.status() != AIO_CONNECTED) {
+      Serial.println("Conexão MQTT perdida. Tentando reconectar...");
+      
+      // Atualiza o tempo da última tentativa
+      ultimoTempoTentativaReconexao = millis();
+      
+      // Tenta reconectar
+      io.connect();    // Tenta reconectar
+      
+      // Verifica se reconectou com sucesso
+      if (io.status() == AIO_CONNECTED) {
+        Serial.println("Reconectado com sucesso ao Adafruit IO!");
+        // Reconecta aos feeds
+        iluminacaoComandoSub->onMessage(handleIluminacaoComando);
+        iluminacaoComandoSub->get(); // Atualiza com o último comando
+      } else {
+        Serial.print("Falha na reconexão ao Adafruit IO. Status: ");
+        Serial.println(io.statusText());
+      }
     }
   }
 }
@@ -180,15 +192,23 @@ void handleIluminacaoComando(AdafruitIO_Data *data) {
 
   if (comando.equalsIgnoreCase("LIGAR_MANUAL")) {
     currentMode = MANUAL_LIGADO;
+    Serial.println("Modo MANUAL_LIGADO ativado");
   } else if (comando.equalsIgnoreCase("DESLIGAR_MANUAL")) {
     currentMode = MANUAL_DESLIGADO;
+    Serial.println("Modo MANUAL_DESLIGADO ativado");
   } else if (comando.equalsIgnoreCase("AUTOMATICO")) {
     currentMode = AUTOMATICO;
     // Força o temporizador a um estado "expirado" para apagar a luz ao entrar no modo
     ultimoMovimentoDetectado = millis() - TEMPO_LUZ_ACESA_APOS_MOVIMENTO - 1;
     desligarLuzes();
+    Serial.println("Modo AUTOMATICO ativado");
   } else if (comando.startsWith("#")) {
     parseHexColor(comando.c_str());
+    Serial.print("Cor alterada para: ");
+    Serial.println(comando);
+  } else {
+    Serial.print("Comando desconhecido recebido: ");
+    Serial.println(comando);
   }
 }
 
@@ -198,6 +218,7 @@ void ligarLuzes() {
     fill_solid(leds, NUM_LEDS, corAtual);
     FastLED.show();
     luzesEstaoAcesas = true;
+    Serial.println("Luzes ligadas");
   }
 }
 
@@ -206,12 +227,24 @@ void desligarLuzes() {
     FastLED.clear();
     FastLED.show();
     luzesEstaoAcesas = false;
+    Serial.println("Luzes desligadas");
   }
 }
 
 void parseHexColor(const char* hexstring) {
-  long number = strtol(&hexstring[1], NULL, 16);
+  // Remove o '#' se presente
+  const char* hex = hexstring;
+  if (hex[0] == '#') {
+    hex++;
+  }
+  
+  // Converte a string hexadecimal para um número inteiro
+  long number = (long)strtol(hex, NULL, 16);
+  
+  // Define a cor atual
   corAtual = number;
+  
+  // Atualiza as luzes se estiverem acesas
   if (luzesEstaoAcesas && (currentMode == MANUAL_LIGADO || currentMode == AUTOMATICO)) {
     fill_solid(leds, NUM_LEDS, corAtual);
     FastLED.show();
@@ -220,25 +253,31 @@ void parseHexColor(const char* hexstring) {
 
 void publishStatusOnChange() {
   unsigned long currentTime = millis();
+  
+  // Verifica se o status mudou e se está dentro do rate limit
   if (luzesEstaoAcesas != ultimoStatusPublicado && currentTime - ultimoPublishTime > PUBLISH_STATUS_RATE_LIMIT) {
-    if (luzesEstaoAcesas) {
-      iluminacaoStatusFeed->save(F("ACESA"));
-    } else {
-      iluminacaoStatusFeed->save(F("APAGADA"));
-    }
+    // Publica o novo status usando as strings estáticas
+    iluminacaoStatusFeed->save(luzesEstaoAcesas ? ILUMINACAO_ACESA : ILUMINACAO_APAGADA);
+    
     ultimoStatusPublicado = luzesEstaoAcesas;
     ultimoPublishTime = currentTime;
+    Serial.print("Publicado status: ");
+    Serial.println(luzesEstaoAcesas ? "ACESA" : "APAGADA");
   }
 }
 
 // --- Função para ler luminosidade do BH1750 ---
 void lerLuminosidade() {
-  luminosidadeAtual = luzSensor.readLightLevel();
+  float nivelLuz = luzSensor.readLightLevel();
   
-  Serial.print("Luminosidade atual: ");
-  Serial.print(luminosidadeAtual);
-  Serial.println(" lux");
-  
-  // NOTA: Não estamos publicando a luminosidade no Adafruit IO
-  // conforme especificação do projeto (Módulo Iluminação tem apenas 2 feeds)
+  // Verifica se a leitura é válida
+  if (nivelLuz >= 0) {
+    luminosidadeAtual = nivelLuz;
+    
+    Serial.print("Luminosidade atual: ");
+    Serial.print(luminosidadeAtual);
+    Serial.println(" lux");
+  } else {
+    Serial.println("Erro ao ler luminosidade do sensor BH1750");
+  }
 }
